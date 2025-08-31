@@ -1,56 +1,51 @@
-import streamlit as st
-import pandas as pd
 import requests
-import plotly.graph_objects as go
 import time
+import os
 
-# Binance API URL for order book
-BASE_URL = "https://api.binance.com/api/v3/depth"
+# ✅ Use Futures endpoint instead of Spot (works even if spot is blocked in your region)
+BASE_URL = "https://fapi.binance.com/fapi/v1/depth"
 
-# Function to fetch order book
-def get_order_book(symbol="BTCUSDT", limit=20):
+SYMBOL = "BTCUSDT"
+LIMIT = 20  # number of bids/asks
+REFRESH = 1  # refresh every 1 second
+
+def fetch_orderbook():
     try:
-        response = requests.get(BASE_URL, params={"symbol": symbol, "limit": limit}, timeout=5)
+        url = f"{BASE_URL}?symbol={SYMBOL}&limit={LIMIT}"
+        response = requests.get(url, timeout=5)
         response.raise_for_status()
-        data = response.json()
-        bids = pd.DataFrame(data["bids"], columns=["Price", "Quantity"], dtype=float)
-        asks = pd.DataFrame(data["asks"], columns=["Price", "Quantity"], dtype=float)
-        return bids, asks
+        return response.json()
     except Exception as e:
-        st.error(f"Failed to load order book data: {e}")
-        return pd.DataFrame(), pd.DataFrame()
-
-# Streamlit App
-st.set_page_config(page_title="BTCUSDT Order Book", layout="wide")
-
-st.title("📊 Live BTC/USDT Order Book (Binance)")
-st.caption("Updates every second")
-
-# Container for updating
-placeholder = st.empty()
+        print(f"❌ Failed to load order book data: {e}")
+        return None
 
 while True:
-    bids, asks = get_order_book("BTCUSDT", 20)
+    os.system("clear")  # clear screen (use "cls" if on Windows)
+    data = fetch_orderbook()
+    
+    if data:
+        bids = data['bids']
+        asks = data['asks']
 
-    if not bids.empty and not asks.empty:
-        with placeholder.container():
-            col1, col2 = st.columns(2)
+        print(f"\n📊 Order Book for {SYMBOL} (Top {LIMIT})\n")
+        print("---- BUYERS (Bids) ----")
+        for price, qty in bids[:5]:
+            print(f"Buy {qty} @ {price}")
 
-            with col1:
-                st.subheader("Buy Orders (Bids)")
-                st.dataframe(bids, use_container_width=True)
+        print("\n---- SELLERS (Asks) ----")
+        for price, qty in asks[:5]:
+            print(f"Sell {qty} @ {price}")
 
-            with col2:
-                st.subheader("Sell Orders (Asks)")
-                st.dataframe(asks, use_container_width=True)
+        # Quick imbalance check
+        total_bid = sum(float(q) for _, q in bids)
+        total_ask = sum(float(q) for _, q in asks)
 
-            # Plot depth chart
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=bids["Price"], y=bids["Quantity"],
-                                     mode="lines", name="Bids", line=dict(color="green")))
-            fig.add_trace(go.Scatter(x=asks["Price"], y=asks["Quantity"],
-                                     mode="lines", name="Asks", line=dict(color="red")))
-            fig.update_layout(title="Order Book Depth", xaxis_title="Price", yaxis_title="Quantity")
-            st.plotly_chart(fig, use_container_width=True)
-
-    time.sleep(1)
+        print("\n📈 Analysis:")
+        if total_bid > total_ask:
+            print("🔥 Buyers stronger → Possible UP move")
+        elif total_ask > total_bid:
+            print("⚠️ Sellers stronger → Possible DOWN move")
+        else:
+            print("➖ Balanced order book → Sideways")
+    
+    time.sleep(REFRESH)
