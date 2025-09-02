@@ -1,3 +1,6 @@
-pip install streamlit plotly requests pandas numpy streamlit-autorefresh
-streamlit run app.py
-
+streamlit
+plotly
+requests
+pandas
+numpy
+streamlit-autorefresh
