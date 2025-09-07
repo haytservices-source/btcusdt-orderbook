@@ -8,8 +8,8 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="BTCUSDT Live Predictor", layout="wide")
 st.title("BTC/USDT Live Predictor")
 
-# --- Auto-refresh every 2 seconds ---
-st_autorefresh(interval=2000, key="refresh")
+# --- Auto-refresh every 1 second ---
+st_autorefresh(interval=1000, key="refresh")
 
 # --- Prediction logic ---
 def get_prediction(prices):
@@ -33,7 +33,7 @@ def get_candles():
     for url in urls:
         try:
             params = {"symbol": "BTCUSDT", "interval": "1m", "limit": 50}
-            r = requests.get(url, params=params, timeout=10)
+            r = requests.get(url, params=params, timeout=5)
             data = r.json()
             if not isinstance(data, list) or len(data) == 0:
                 continue
@@ -86,7 +86,7 @@ else:
         close=df["close"]
     )])
 
-    # Add prediction arrow on last candle
+    # Add last candle prediction arrow
     if prediction.startswith("UP"):
         fig.add_annotation(x=df["time"].iloc[-1], y=df["close"].iloc[-1],
                            text="⬆️", showarrow=False, font=dict(size=20))
@@ -96,6 +96,15 @@ else:
     else:
         fig.add_annotation(x=df["time"].iloc[-1], y=df["close"].iloc[-1],
                            text="➡️", showarrow=False, font=dict(size=20))
+
+    # Optional: Add tiny arrows on last few candles for quick trend
+    for i in range(-5, 0):
+        if df["close"].iloc[i] > df["open"].iloc[i]:
+            fig.add_annotation(x=df["time"].iloc[i], y=df["high"].iloc[i],
+                               text="⬆️", showarrow=False, font=dict(size=12))
+        elif df["close"].iloc[i] < df["open"].iloc[i]:
+            fig.add_annotation(x=df["time"].iloc[i], y=df["low"].iloc[i],
+                               text="⬇️", showarrow=False, font=dict(size=12))
 
     fig.update_layout(
         xaxis_rangeslider_visible=False,
