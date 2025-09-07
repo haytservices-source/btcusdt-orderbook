@@ -1,10 +1,13 @@
 import streamlit as st
 import requests
 import pandas as pd
-import time
+from streamlit_autorefresh import st_autorefresh
 
-st.set_page_config(page_title="BTC/USD Futures Live Order Book Dashboard", layout="wide")
+st.set_page_config(page_title="BTC/USD Futures Live Order Book", layout="wide")
 st.title("BTC/USD (USDⓈ-M Futures) Live Order Book Dashboard")
+
+# Auto-refresh every 0.5 seconds
+st_autorefresh(interval=500, key="refresh")
 
 # Symbol for Binance USDⓈ-M Futures BTC/USD perpetual
 SYMBOL = "BTCUSD_PERP"
@@ -12,13 +15,6 @@ SYMBOL = "BTCUSD_PERP"
 # API URLs
 ORDER_BOOK_URL = f"https://fapi.binance.com/fapi/v1/depth?symbol={SYMBOL}&limit=5"
 PRICE_URL = f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={SYMBOL}"
-
-# Placeholders for dynamic updating
-price_placeholder = st.empty()
-buyers_placeholder = st.empty()
-sellers_placeholder = st.empty()
-volume_placeholder = st.empty()
-orderbook_placeholder = st.empty()
 
 def fetch_data():
     # Fetch last traded price
@@ -51,16 +47,12 @@ def fetch_data():
 
     return price, buyers_strength, sellers_strength, total_volume, df_orderbook
 
-# Auto-refresh loop
-while True:
-    price, buyers_strength, sellers_strength, total_volume, df_orderbook = fetch_data()
+# Fetch data
+price, buyers_strength, sellers_strength, total_volume, df_orderbook = fetch_data()
 
-    # Update dashboard
-    price_placeholder.markdown(f"**Price:** ${price:,.2f}")
-    buyers_placeholder.markdown(f"**Buyers Strength:** {buyers_strength:.4f} BTC")
-    sellers_placeholder.markdown(f"**Sellers Strength:** {sellers_strength:.4f} BTC")
-    volume_placeholder.markdown(f"**Total Volume (Top 5):** {total_volume:.4f} BTC")
-    orderbook_placeholder.table(df_orderbook)
-
-    # Refresh every 0.5 seconds
-    time.sleep(0.5)
+# Display
+st.markdown(f"**Price:** ${price:,.2f}")
+st.markdown(f"**Buyers Strength:** {buyers_strength:.4f} BTC")
+st.markdown(f"**Sellers Strength:** {sellers_strength:.4f} BTC")
+st.markdown(f"**Total Volume (Top 5):** {total_volume:.4f} BTC")
+st.table(df_orderbook)
