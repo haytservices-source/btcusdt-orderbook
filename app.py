@@ -1,86 +1,68 @@
 import streamlit as st
 import requests
-import websocket
-import threading
-import json
+import pandas as pd
+from streamlit_autorefresh import st_autorefresh
 
-st.set_page_config(page_title="BTC/USDT Buyer vs Seller Dashboard", layout="wide")
+# Auto-refresh every second
+st_autorefresh(interval=1000, key="refresh_dashboard")
 
-# Placeholders
-price_placeholder = st.empty()
-buyers_placeholder = st.empty()
-sellers_placeholder = st.empty()
-volume_placeholder = st.empty()
-order_book_placeholder = st.empty()
+st.set_page_config(page_title="BTC/USDT Buyers vs Sellers Dashboard", layout="wide")
 
-# Shared state
-if "price" not in st.session_state:
-    st.session_state.price = 0
-if "buy_volume" not in st.session_state:
-    st.session_state.buy_volume = 0
-if "sell_volume" not in st.session_state:
-    st.session_state.sell_volume = 0
-if "order_book" not in st.session_state:
-    st.session_state.order_book = []
+st.title("💎 BTC/USDT Buyers vs Sellers Dashboard")
 
-# Fetch initial order book
-def fetch_order_book():
-    url = "https://api.binance.us/api/v3/depth?symbol=BTCUSDT&limit=5"
+# Binance US API endpoints
+SYMBOL = "BTCUSDT"
+BASE_URL = "https://api.binance.us/api/v3"
+
+# Function to fetch latest price
+def get_price(symbol):
+    url = f"{BASE_URL}/ticker/price?symbol={symbol}"
     data = requests.get(url).json()
-    st.session_state.order_book = data
-    st.session_state.buy_volume = sum(float(bid[1]) for bid in data['bids'])
-    st.session_state.sell_volume = sum(float(ask[1]) for ask in data['asks'])
+    return float(data['price'])
 
-fetch_order_book()
+# Function to fetch order book
+def get_order_book(symbol, limit=5):
+    url = f"{BASE_URL}/depth?symbol={symbol}&limit=10"
+    data = requests.get(url).json()
+    bids = data['bids'][:limit]
+    asks = data['asks'][:limit]
+    return bids, asks
 
-# WebSocket callbacks
-def on_message(ws, message):
-    data = json.loads(message)
-    st.session_state.price = float(data['p'])
-    # Update volume for buyers/sellers
-    if data['m']:  # trade is a sell
-        st.session_state.sell_volume += float(data['q'])
-    else:          # trade is a buy
-        st.session_state.buy_volume += float(data['q'])
+# Function to calculate buyer/seller strength
+def calculate_strength(bids, asks):
+    buyer_strength = sum([float(qty) for price, qty in bids])
+    seller_strength = sum([float(qty) for price, qty in asks])
+    total_volume = buyer_strength + seller_strength
+    return buyer_strength, seller_strength, total_volume
 
-def on_error(ws, error):
-    print("WebSocket Error:", error)
+try:
+    # Fetch data
+    price = get_price(SYMBOL)
+    bids, asks = get_order_book(SYMBOL)
+    buyer_strength, seller_strength, total_volume = calculate_strength(bids, asks)
 
-def on_close(ws, close_status_code, close_msg):
-    print("WebSocket closed")
+    # Display live metrics
+    st.subheader(f"Price: ${price:,.2f}")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Buyers Strength", f"{buyer_strength:.4f} BTC")
+    col2.metric("Sellers Strength", f"{seller_strength:.4f} BTC")
+    col3.metric("Total Volume", f"{total_volume:.4f} BTC")
 
-def start_ws():
-    ws = websocket.WebSocketApp(
-        "wss://stream.binance.us:9443/ws/btcusdt@trade",
-        on_message=on_message,
-        on_error=on_error,
-        on_close=on_close
-    )
-    ws.run_forever()
+    # Display top 5 order book levels
+    st.subheader("Top 5 Order Book Levels")
+    order_book_data = []
+    for i in range(len(bids)):
+        bid_price, bid_qty = bids[i]
+        ask_price, ask_qty = asks[i]
+        order_book_data.append({
+            "Bid Price": float(bid_price),
+            "Bid Qty": float(bid_qty),
+            "Ask Price": float(ask_price),
+            "Ask Qty": float(ask_qty)
+        })
 
-# Start WebSocket in background
-if "ws_thread" not in st.session_state:
-    ws_thread = threading.Thread(target=start_ws, daemon=True)
-    ws_thread.start()
-    st.session_state.ws_thread = ws_thread
+    df_order_book = pd.DataFrame(order_book_data)
+    st.dataframe(df_order_book, use_container_width=True)
 
-# Dashboard updating in Streamlit main loop
-st_autorefresh = st.experimental_rerun
-
-# Use this simple updater instead of while True
-def update_dashboard():
-    price_placeholder.markdown(f"### Price: ${st.session_state.price:,.2f}")
-    buyers_placeholder.markdown(f"**Buyers Strength:** {st.session_state.buy_volume:.4f} BTC")
-    sellers_placeholder.markdown(f"**Sellers Strength:** {st.session_state.sell_volume:.4f} BTC")
-    volume_placeholder.markdown(f"**Total Volume:** {(st.session_state.buy_volume + st.session_state.sell_volume):.4f} BTC")
-    
-    order_book_md = "### Top 5 Order Book Levels\n\n| Bid Price | Bid Qty | Ask Price | Ask Qty |\n|---|---|---|---|\n"
-    for i in range(5):
-        bid = st.session_state.order_book['bids'][i]
-        ask = st.session_state.order_book['asks'][i]
-        order_book_md += f"| {bid[0]} | {bid[1]} | {ask[0]} | {ask[1]} |\n"
-    order_book_placeholder.markdown(order_book_md)
-
-# Auto refresh every second
-st_autorefresh(interval=1000, key="dashboard_refresh")
-update_dashboard()
+except Exception as e:
+    st.error(f"Error fetching data: {e}")
