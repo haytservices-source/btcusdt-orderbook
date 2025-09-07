@@ -1,38 +1,54 @@
 import streamlit as st
-import requests
-from streamlit_autorefresh import st_autorefresh
+import websocket
+import json
+import threading
+import time
+import pandas as pd
+import plotly.graph_objects as go
 
-st.set_page_config(page_title="💎 Golden Sniper Pro BTC/USDT Predictor", layout="wide")
+st.set_page_config(page_title="BTCUSDT Order Flow Predictor", layout="wide")
 
-# Auto-refresh every 1 second
-st_autorefresh(interval=1000, key="refresh")
+SYMBOL = "BTCUSDT"
+latest_data = {"bids": None, "asks": None}
 
-# Function to get latest price from Binance US
-def get_latest_price():
-    url = "https://api.binance.us/api/v3/ticker/price?symbol=BTCUSDT"
-    response = requests.get(url)
-    data = response.json()
-    return float(data["price"])
+# Function to handle incoming WebSocket messages
+def on_message(ws, message):
+    data = json.loads(message)
+    latest_data["bids"] = data.get("bids")
+    latest_data["asks"] = data.get("asks")
 
-# Get latest price
-price = get_latest_price()
+# Error handling
+def on_error(ws, error):
+    st.error(f"WebSocket error: {error}")
 
-# Simple trend logic
-trend = "WAIT"
-confidence = 50
-if "prev_price" not in st.session_state:
-    st.session_state.prev_price = price
+def on_close(ws, close_status_code, close_msg):
+    st.warning("WebSocket closed")
 
-if price > st.session_state.prev_price * 1.0005:
-    trend = "UP"
-    confidence = 80
-elif price < st.session_state.prev_price * 0.9995:
-    trend = "DOWN"
-    confidence = 80
+# Function to run WebSocket
+def run_ws():
+    url = f"wss://stream.binance.com:9443/ws/{SYMBOL.lower()}@depth20@100ms"
+    ws = websocket.WebSocketApp(url, on_message=on_message, on_error=on_error, on_close=on_close)
+    ws.run_forever()
 
-st.session_state.prev_price = price
+# Start WebSocket in a separate thread
+threading.Thread(target=run_ws, daemon=True).start()
 
-# Display
-st.markdown(f"**Price:** ${price:,.2f}")
-st.markdown(f"**Trend Signal:** {trend}")
-st.markdown(f"**Confidence:** {confidence}%")
+# Auto-refresh every second
+st_autorefresh = st.empty()
+
+while True:
+    time.sleep(1)
+    if latest_data["bids"] is None or latest_data["asks"] is None:
+        st.warning("Waiting for live order book data...")
+        continue
+
+    bids_df = pd.DataFrame(latest_data["bids"], columns=["Price", "Quantity"]).astype(float)
+    asks_df = pd.DataFrame(latest_data["asks"], columns=["Price", "Quantity"]).astype(float)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=bids_df["Price"], y=bids_df["Quantity"], name="Bids", marker_color='green'))
+    fig.add_trace(go.Bar(x=asks_df["Price"], y=asks_df["Quantity"], name="Asks", marker_color='red'))
+
+    fig.update_layout(title="BTCUSDT Order Book (Top 20 Levels)", xaxis_title="Price", yaxis_title="Quantity", barmode='overlay')
+    st.plotly_chart(fig, use_container_width=True)
+    st_autorefresh.empty()
