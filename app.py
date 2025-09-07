@@ -2,6 +2,7 @@ import streamlit as st
 import websocket
 import json
 import threading
+import time
 
 st.set_page_config(page_title="💎 Golden Sniper Pro BTC/USDT Predictor", layout="wide")
 
@@ -12,14 +13,13 @@ confidence_placeholder = st.empty()
 
 # Global variable to store latest price
 latest_price = 0.0
+prev_price = 0.0
 
 # Function to determine trend & confidence
 def get_sniper_signal(price):
-    # Simple EMA + RSI logic for demo
-    # Here we just use price momentum approximation
     global prev_price
     trend = "WAIT"
-    confidence = 0.0
+    confidence = 0
     rsi = 50.0
 
     if price > prev_price * 1.0005:
@@ -38,8 +38,7 @@ def get_sniper_signal(price):
 def on_message(ws, message):
     global latest_price
     data = json.loads(message)
-    price = float(data['p'])
-    latest_price = price
+    latest_price = float(data['p'])
 
 def on_error(ws, error):
     print(f"WebSocket error: {error}")
@@ -61,19 +60,17 @@ def start_ws():
     )
     ws.run_forever()
 
-# Initialize previous price
-prev_price = 0.0
-
 # Start WebSocket thread
 threading.Thread(target=start_ws, daemon=True).start()
 
-# Streamlit live update loop
+# Streamlit-friendly auto-refresh
+st_autorefresh = st.empty()
+
 while True:
-    try:
-        if latest_price != 0.0:
-            trend, confidence, rsi = get_sniper_signal(latest_price)
-            price_placeholder.markdown(f"**Price:** ${latest_price:,.2f}")
-            signal_placeholder.markdown(f"**Trend Signal:** {trend} (RSI: {rsi:.1f})")
-            confidence_placeholder.markdown(f"**Confidence:** {confidence}%")
-    except Exception as e:
-        st.error(f"Error: {e}")
+    if latest_price != 0.0:
+        trend, confidence, rsi = get_sniper_signal(latest_price)
+        price_placeholder.markdown(f"**Price:** ${latest_price:,.2f}")
+        signal_placeholder.markdown(f"**Trend Signal:** {trend} (RSI: {rsi:.1f})")
+        confidence_placeholder.markdown(f"**Confidence:** {confidence}%")
+    time.sleep(0.5)  # refresh every 0.5 seconds
+
