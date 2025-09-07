@@ -1,51 +1,66 @@
 import streamlit as st
 import requests
 import pandas as pd
-from streamlit_autorefresh import st_autorefresh
+import time
 
-# Auto-refresh every 0.5 second (500 ms)
-st_autorefresh(interval=500, key="refresh_dashboard")
+st.set_page_config(page_title="BTC/USDT Live Order Book Dashboard", layout="wide")
+st.title("BTC/USDT Live Order Book Dashboard (Binance US)")
 
-st.set_page_config(page_title="BTC/USDT Buyer-Seller Dashboard", layout="wide")
-st.title("💎 BTC/USDT Buyer-Seller Dashboard (Binance US)")
-
-# Binance US order book endpoint
-BASE_URL = "https://api.binance.us/api/v3/depth"
+# Symbol
 SYMBOL = "BTCUSDT"
-LIMIT = 5  # Top 5 levels
 
-# Fetch order book data
-try:
-    response = requests.get(f"{BASE_URL}?symbol={SYMBOL}&limit={LIMIT}")
-    data = response.json()
+# URLs
+ORDER_BOOK_URL = f"https://api.binance.us/api/v3/depth?symbol={SYMBOL}&limit=5"
+PRICE_URL = f"https://api.binance.us/api/v3/ticker/price?symbol={SYMBOL}"
 
-    bids = data['bids']  # [price, qty]
-    asks = data['asks']
+# Placeholders for dynamic updating
+price_placeholder = st.empty()
+buyers_placeholder = st.empty()
+sellers_placeholder = st.empty()
+volume_placeholder = st.empty()
+orderbook_placeholder = st.empty()
 
-    # Convert to DataFrame
-    bid_df = pd.DataFrame(bids, columns=['Bid Price', 'Bid Qty']).astype(float)
-    ask_df = pd.DataFrame(asks, columns=['Ask Price', 'Ask Qty']).astype(float)
+def fetch_data():
+    # Fetch last traded price
+    try:
+        price_resp = requests.get(PRICE_URL, timeout=1)
+        price_resp.raise_for_status()
+        price = float(price_resp.json()['price'])
+    except:
+        price = 0.0
 
-    # Current price: mid-price between best bid and ask
-    price = (bid_df['Bid Price'].iloc[0] + ask_df['Ask Price'].iloc[0]) / 2
+    # Fetch order book (top 5)
+    try:
+        ob_resp = requests.get(ORDER_BOOK_URL, timeout=1)
+        ob_resp.raise_for_status()
+        ob_data = ob_resp.json()
+        bids = ob_data['bids']  # list of [price, qty]
+        asks = ob_data['asks']
+    except:
+        bids, asks = [], []
 
-    # Buyers & sellers strength (sum of top 5 qty)
-    buyers_strength = bid_df['Bid Qty'].sum()
-    sellers_strength = ask_df['Ask Qty'].sum()
+    # Calculate Buyers/Sellers Strength and Total Volume
+    buyers_strength = sum([float(bid[1]) for bid in bids])
+    sellers_strength = sum([float(ask[1]) for ask in asks])
     total_volume = buyers_strength + sellers_strength
 
-    # Display metrics
-    col1, col2 = st.columns(2)
-    col1.metric("Price (USDT)", f"${price:,.2f}")
-    col2.metric("Total Volume (BTC)", f"{total_volume:.4f}")
+    # Prepare order book DataFrame
+    df_bids = pd.DataFrame(bids, columns=['Bid Price', 'Bid Qty'])
+    df_asks = pd.DataFrame(asks, columns=['Ask Price', 'Ask Qty'])
+    df_orderbook = pd.concat([df_bids, df_asks], axis=1)
 
-    st.metric("Buyers Strength (BTC)", f"{buyers_strength:.4f}")
-    st.metric("Sellers Strength (BTC)", f"{sellers_strength:.4f}")
+    return price, buyers_strength, sellers_strength, total_volume, df_orderbook
 
-    # Display top 5 order book levels
-    st.subheader("Top 5 Order Book Levels")
-    order_book_df = pd.concat([bid_df.reset_index(drop=True), ask_df.reset_index(drop=True)], axis=1)
-    st.dataframe(order_book_df, use_container_width=True)
+# Auto-refresh loop
+while True:
+    price, buyers_strength, sellers_strength, total_volume, df_orderbook = fetch_data()
 
-except Exception as e:
-    st.error(f"Failed to fetch order book data: {e}")
+    # Update dashboard
+    price_placeholder.markdown(f"**Price:** ${price:,.2f}")
+    buyers_placeholder.markdown(f"**Buyers Strength:** {buyers_strength:.4f} BTC")
+    sellers_placeholder.markdown(f"**Sellers Strength:** {sellers_strength:.4f} BTC")
+    volume_placeholder.markdown(f"**Total Volume:** {total_volume:.4f} BTC")
+    orderbook_placeholder.table(df_orderbook)
+
+    # Refresh every 0.5 seconds
+    time.sleep(0.5)
