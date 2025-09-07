@@ -16,10 +16,17 @@ def get_prediction(price):
 
 # --- Get live BTCUSDT data from Binance (1m candles) ---
 def get_candles():
-    url = "https://api.binance.com/api/v3/klines"
-    params = {"symbol": "BTCUSDT", "interval": "1m", "limit": 60}
     try:
-        data = requests.get(url, params=params, timeout=5).json()
+        url = "https://api.binance.com/api/v3/klines"
+        params = {"symbol": "BTCUSDT", "interval": "1m", "limit": 50}
+        r = requests.get(url, params=params, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+
+        if isinstance(data, dict) and "code" in data:
+            st.error(f"Binance error: {data}")
+            return pd.DataFrame()
+
         df = pd.DataFrame(data, columns=[
             "time","open","high","low","close","volume",
             "close_time","qav","num_trades","taker_base","taker_quote","ignore"
@@ -27,6 +34,7 @@ def get_candles():
         df["time"] = pd.to_datetime(df["time"], unit="ms")
         df[["open","high","low","close","volume"]] = df[["open","high","low","close","volume"]].astype(float)
         return df
+
     except Exception as e:
         st.error(f"Error fetching candles: {e}")
         return pd.DataFrame()
@@ -37,8 +45,8 @@ placeholder = st.empty()
 while True:
     df = get_candles()
     if df.empty:
-        st.warning("No data from Binance")
-        time.sleep(3)
+        st.warning("⚠️ Still no data, Binance might be blocking API")
+        time.sleep(5)
         continue
 
     last_price = df["close"].iloc[-1]
@@ -64,4 +72,4 @@ while True:
         fig.update_layout(xaxis_rangeslider_visible=False, height=500)
         st.plotly_chart(fig, use_container_width=True)
 
-    time.sleep(5)  # update every 5 seconds (can lower if you want faster)
+    time.sleep(5)  # update every 5 seconds
