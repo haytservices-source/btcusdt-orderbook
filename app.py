@@ -1,54 +1,50 @@
 import streamlit as st
-import websocket
-import json
-import threading
-import time
+import requests
 import pandas as pd
 import plotly.graph_objects as go
+import time
 
-st.set_page_config(page_title="BTCUSDT Order Flow Predictor", layout="wide")
-
+st.set_page_config(page_title="BTCUSDT Order Book", layout="wide")
 SYMBOL = "BTCUSDT"
-latest_data = {"bids": None, "asks": None}
+LIMIT = 20  # top 20 bids/asks
 
-# Function to handle incoming WebSocket messages
-def on_message(ws, message):
-    data = json.loads(message)
-    latest_data["bids"] = data.get("bids")
-    latest_data["asks"] = data.get("asks")
+# Function to fetch order book from Binance REST API
+def get_orderbook():
+    url = f"https://api.binance.com/api/v3/depth?symbol={SYMBOL}&limit={LIMIT}"
+    data = requests.get(url).json()
+    bids = pd.DataFrame(data['bids'], columns=['Price','Quantity']).astype(float)
+    asks = pd.DataFrame(data['asks'], columns=['Price','Quantity']).astype(float)
+    return bids, asks
 
-# Error handling
-def on_error(ws, error):
-    st.error(f"WebSocket error: {error}")
+st.title("BTC/USDT Live Order Book")
 
-def on_close(ws, close_status_code, close_msg):
-    st.warning("WebSocket closed")
+# Placeholder for live chart
+placeholder = st.empty()
 
-# Function to run WebSocket
-def run_ws():
-    url = f"wss://stream.binance.com:9443/ws/{SYMBOL.lower()}@depth20@100ms"
-    ws = websocket.WebSocketApp(url, on_message=on_message, on_error=on_error, on_close=on_close)
-    ws.run_forever()
-
-# Start WebSocket in a separate thread
-threading.Thread(target=run_ws, daemon=True).start()
-
-# Auto-refresh every second
-st_autorefresh = st.empty()
-
+# Continuous loop to refresh every second
 while True:
-    time.sleep(1)
-    if latest_data["bids"] is None or latest_data["asks"] is None:
-        st.warning("Waiting for live order book data...")
-        continue
+    try:
+        bids, asks = get_orderbook()
+        
+        # Plot using Plotly
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=bids['Price'], y=bids['Quantity'], name='Bids', marker_color='green'))
+        fig.add_trace(go.Bar(x=asks['Price'], y=asks['Quantity'], name='Asks', marker_color='red'))
+        fig.update_layout(
+            title=f"{SYMBOL} Order Book (Top {LIMIT})",
+            barmode='overlay',
+            xaxis_title='Price',
+            yaxis_title='Quantity',
+            xaxis=dict(type='category'),
+        )
+        
+        # Render chart in Streamlit
+        placeholder.plotly_chart(fig, use_container_width=True)
+        
+        # Refresh every second
+        time.sleep(1)
+    
+    except Exception as e:
+        st.error(f"Error fetching order book: {e}")
+        time.sleep(5)
 
-    bids_df = pd.DataFrame(latest_data["bids"], columns=["Price", "Quantity"]).astype(float)
-    asks_df = pd.DataFrame(latest_data["asks"], columns=["Price", "Quantity"]).astype(float)
-
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=bids_df["Price"], y=bids_df["Quantity"], name="Bids", marker_color='green'))
-    fig.add_trace(go.Bar(x=asks_df["Price"], y=asks_df["Quantity"], name="Asks", marker_color='red'))
-
-    fig.update_layout(title="BTCUSDT Order Book (Top 20 Levels)", xaxis_title="Price", yaxis_title="Quantity", barmode='overlay')
-    st.plotly_chart(fig, use_container_width=True)
-    st_autorefresh.empty()
