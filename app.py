@@ -1,26 +1,33 @@
-import streamlit as st
-import websocket
+import requests
 import json
-import threading
 
-st.title("BTC/USDT (USDⓈ-M Futures) Live Price")
+# === CONFIG ===
+OANDA_ACCOUNT_ID = "YOUR_ACCOUNT_ID"
+OANDA_API_KEY = "YOUR_API_KEY"
+OANDA_URL = "https://api-fxpractice.oanda.com/v3"
 
-# Placeholder for live price
-price_placeholder = st.empty()
+headers = {
+    "Authorization": f"Bearer {OANDA_API_KEY}",
+    "Content-Type": "application/json"
+}
 
-# WebSocket message handler
-def on_message(ws, message):
-    data = json.loads(message)
-    price = float(data['p'])  # 'p' is the trade price
-    price_placeholder.metric(label="BTC/USDT Price", value=f"${price:,.2f}")
+# === Live Price ===
+def get_live_price():
+    url = f"{OANDA_URL}/accounts/{OANDA_ACCOUNT_ID}/pricing?instruments=XAU_USD"
+    response = requests.get(url, headers=headers)
+    data = response.json()
+    price = data['prices'][0]
+    print(f"XAU/USD Live Price: Bid: {price['bids'][0]['price']} / Ask: {price['asks'][0]['price']}")
 
-# Run WebSocket in a separate thread
-def run_ws():
-    ws = websocket.WebSocketApp(
-        "wss://fstream.binance.com/ws/btcusdt@trade",
-        on_message=on_message
-    )
-    ws.run_forever()
+# === Order Book ===
+def get_order_book():
+    url = f"{OANDA_URL}/instruments/XAU_USD/orderBook"
+    response = requests.get(url, headers=headers)
+    data = response.json()
+    print("\n--- XAU/USD Order Book ---")
+    for bucket in data['orderBook']['buckets'][:10]:  # top 10 buckets
+        print(f"Price: {bucket['price']}, Long %: {bucket['longCountPercent']}, Short %: {bucket['shortCountPercent']}")
 
-thread = threading.Thread(target=run_ws)
-thread.start()
+if __name__ == "__main__":
+    get_live_price()
+    get_order_book()
