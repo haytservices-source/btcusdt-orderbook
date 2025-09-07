@@ -4,11 +4,12 @@ import pandas as pd
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
-# Auto-refresh every 2 seconds
-st_autorefresh(interval=2000, key="refresh")
-
+# --- Page Config ---
 st.set_page_config(page_title="BTCUSDT Live Predictor", layout="wide")
 st.title("BTC/USDT Live Predictor")
+
+# --- Auto-refresh every 2 seconds ---
+st_autorefresh(interval=2000, key="refresh")
 
 # --- Prediction logic ---
 def get_prediction(prices):
@@ -21,7 +22,8 @@ def get_prediction(prices):
     else:
         return "SIDEWAYS ➡️", 0.5
 
-# --- Get candles ---
+# --- Get candles with caching to avoid API rate limits ---
+@st.cache_data(ttl=2)  # cache data for 2 seconds
 def get_candles():
     urls = [
         "https://api.binance.com/api/v3/klines",     
@@ -43,7 +45,7 @@ def get_candles():
             df[["open","high","low","close","volume"]] = df[["open","high","low","close","volume"]].astype(float)
             df.attrs["source"] = url
             return df
-        except Exception:
+        except Exception as e:
             continue
     return pd.DataFrame()
 
@@ -57,14 +59,14 @@ else:
     prediction, confidence = get_prediction(df["close"].tolist())
     source = df.attrs.get("source", "Unknown")
 
-    # Metrics
+    # --- Metrics ---
     col1, col2, col3 = st.columns(3)
     col1.metric("Price", f"{last_price:.2f}")
     col2.metric("Prediction", prediction)
     col3.metric("Confidence", f"{confidence:.2f}")
     st.caption(f"✅ Data source: {source}")
 
-    # Candlestick chart
+    # --- Candlestick chart ---
     st.subheader("Live BTC/USDT 1m Candles")
     fig = go.Figure(data=[go.Candlestick(
         x=df["time"],
@@ -73,6 +75,36 @@ else:
         low=df["low"],
         close=df["close"]
     )])
-    fig.update_layout(xaxis_rangeslider_visible=False, height=500)
+
+    # --- Add prediction arrow on last candle ---
+    if prediction.startswith("UP"):
+        fig.add_annotation(
+            x=df["time"].iloc[-1],
+            y=df["close"].iloc[-1],
+            text="⬆️",
+            showarrow=False,
+            font=dict(size=20)
+        )
+    elif prediction.startswith("DOWN"):
+        fig.add_annotation(
+            x=df["time"].iloc[-1],
+            y=df["close"].iloc[-1],
+            text="⬇️",
+            showarrow=False,
+            font=dict(size=20)
+        )
+    else:
+        fig.add_annotation(
+            x=df["time"].iloc[-1],
+            y=df["close"].iloc[-1],
+            text="➡️",
+            showarrow=False,
+            font=dict(size=20)
+        )
+
+    fig.update_layout(
+        xaxis_rangeslider_visible=False,
+        height=500,
+        margin=dict(l=10, r=10, t=10, b=10)
+    )
     st.plotly_chart(fig, use_container_width=True)
-`
