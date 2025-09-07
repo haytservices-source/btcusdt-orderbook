@@ -22,13 +22,13 @@ def get_prediction(prices):
     else:
         return "SIDEWAYS ➡️", 0.5
 
-# --- Get candles with caching to avoid API rate limits ---
-@st.cache_data(ttl=2)  # cache data for 2 seconds
+# --- Fetch 1-minute candles ---
+@st.cache_data(ttl=2)
 def get_candles():
     urls = [
-        "https://api.binance.com/api/v3/klines",     
-        "https://fapi.binance.com/fapi/v1/klines",   
-        "https://api.binance.us/api/v3/klines"       
+        "https://api.binance.com/api/v3/klines",
+        "https://fapi.binance.com/fapi/v1/klines",
+        "https://api.binance.us/api/v3/klines"
     ]
     for url in urls:
         try:
@@ -45,26 +45,36 @@ def get_candles():
             df[["open","high","low","close","volume"]] = df[["open","high","low","close","volume"]].astype(float)
             df.attrs["source"] = url
             return df
-        except Exception as e:
+        except:
             continue
     return pd.DataFrame()
 
+# --- Fetch live current price ---
+@st.cache_data(ttl=1)
+def get_current_price():
+    try:
+        r = requests.get("https://api.binance.com/api/v3/ticker/price", params={"symbol":"BTCUSDT"}, timeout=5)
+        return float(r.json()["price"])
+    except:
+        return None
+
 # --- Main UI ---
 df = get_candles()
+current_price = get_current_price()
 
 if df.empty:
-    st.warning("⚠️ No data received from Binance (Spot, Futures, US). Retrying…")
+    st.warning("⚠️ No candle data received from Binance. Retrying…")
 else:
-    last_price = df["close"].iloc[-1]
+    last_candle_close = df["close"].iloc[-1]
     prediction, confidence = get_prediction(df["close"].tolist())
     source = df.attrs.get("source", "Unknown")
 
     # --- Metrics ---
     col1, col2, col3 = st.columns(3)
-    col1.metric("Price", f"{last_price:.2f}")
+    col1.metric("Price", f"{current_price:.2f}" if current_price else f"{last_candle_close:.2f}")
     col2.metric("Prediction", prediction)
     col3.metric("Confidence", f"{confidence:.2f}")
-    st.caption(f"✅ Data source: {source}")
+    st.caption(f"✅ Candle Data Source: {source} | Live Price Source: Binance API")
 
     # --- Candlestick chart ---
     st.subheader("Live BTC/USDT 1m Candles")
@@ -76,31 +86,16 @@ else:
         close=df["close"]
     )])
 
-    # --- Add prediction arrow on last candle ---
+    # Add prediction arrow on last candle
     if prediction.startswith("UP"):
-        fig.add_annotation(
-            x=df["time"].iloc[-1],
-            y=df["close"].iloc[-1],
-            text="⬆️",
-            showarrow=False,
-            font=dict(size=20)
-        )
+        fig.add_annotation(x=df["time"].iloc[-1], y=df["close"].iloc[-1],
+                           text="⬆️", showarrow=False, font=dict(size=20))
     elif prediction.startswith("DOWN"):
-        fig.add_annotation(
-            x=df["time"].iloc[-1],
-            y=df["close"].iloc[-1],
-            text="⬇️",
-            showarrow=False,
-            font=dict(size=20)
-        )
+        fig.add_annotation(x=df["time"].iloc[-1], y=df["close"].iloc[-1],
+                           text="⬇️", showarrow=False, font=dict(size=20))
     else:
-        fig.add_annotation(
-            x=df["time"].iloc[-1],
-            y=df["close"].iloc[-1],
-            text="➡️",
-            showarrow=False,
-            font=dict(size=20)
-        )
+        fig.add_annotation(x=df["time"].iloc[-1], y=df["close"].iloc[-1],
+                           text="➡️", showarrow=False, font=dict(size=20))
 
     fig.update_layout(
         xaxis_rangeslider_visible=False,
