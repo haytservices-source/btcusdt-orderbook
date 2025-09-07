@@ -6,19 +6,21 @@ import numpy as np
 from streamlit_autorefresh import st_autorefresh
 
 # --- Page Setup ---
-st.set_page_config(page_title="Golden Sniper Pro BTC Predictor", layout="wide")
-st.title("💎 Golden Sniper Pro BTC/USDT Predictor")
+st.set_page_config(page_title="Golden Sniper Pro BTC/USDT Predictor", layout="wide")
+st.title("💎 Golden Sniper Pro BTC/USDT Predictor (Binance.US)")
 
-# --- Auto-refresh ---
+# --- Auto-refresh every 1 second ---
 st_autorefresh(interval=1000, key="refresh")
 
-# --- Fetch Candles Function ---
+# --- Fetch Candles from Binance.US ---
 @st.cache_data(ttl=2)
-def get_candles(interval="1m", limit=100):
+def get_candles(interval="1m", limit=150):
     try:
-        r = requests.get("https://api.binance.com/api/v3/klines",
+        r = requests.get("https://api.binance.us/api/v3/klines",
                          params={"symbol":"BTCUSDT","interval":interval,"limit":limit}, timeout=5)
         data = r.json()
+        if not data or len(data) < 20:
+            return pd.DataFrame()
         df = pd.DataFrame(data, columns=[
             "time","open","high","low","close","volume",
             "close_time","qav","num_trades","taker_base","taker_quote","ignore"
@@ -53,7 +55,7 @@ def analyze_smc(df):
     vol_mean = df["volume"].rolling(20).mean()
     vol_spike = df["volume"].iloc[-1] > 2 * vol_mean.iloc[-1]
 
-    # BOS / CHOCH Detection (simple)
+    # BOS / CHOCH Detection (simplified)
     last_high = df["high"].iloc[-2]
     last_low = df["low"].iloc[-2]
     curr_high = df["high"].iloc[-1]
@@ -93,22 +95,30 @@ def get_multi_tf_signal():
     df5 = get_candles("5m")
     df15 = get_candles("15m")
 
-    s1, c1 = analyze_smc(df1)
-    s5, c5 = analyze_smc(df5)
-    s15, c15 = analyze_smc(df15)
+    signals = []
+    confidences = []
+    df_use = df1  # fallback to 1m
 
-    # Strongest trend confirmation
-    signals = [s1, s5, s15]
-    counts = pd.Series(signals).value_counts()
-    trend = counts.idxmax()
-    confidence = (c1 + c5 + c15)/3
-    return trend, confidence, df1
+    for df_tf in [df1, df5, df15]:
+        if not df_tf.empty:
+            s, c = analyze_smc(df_tf)
+            signals.append(s)
+            confidences.append(c)
+            df_use = df_tf  # last valid df
+
+    if not signals:
+        return "WAIT…", 0.0, df1
+
+    # Most frequent signal
+    trend = pd.Series(signals).value_counts().idxmax()
+    confidence = np.mean(confidences)
+    return trend, confidence, df_use
 
 # --- Live Price ---
 @st.cache_data(ttl=1)
 def get_current_price():
     try:
-        r = requests.get("https://api.binance.com/api/v3/ticker/price", params={"symbol":"BTCUSDT"}, timeout=5)
+        r = requests.get("https://api.binance.us/api/v3/ticker/price", params={"symbol":"BTCUSDT"}, timeout=5)
         return float(r.json()["price"])
     except:
         return None
@@ -117,7 +127,7 @@ def get_current_price():
 trend, confidence, df = get_multi_tf_signal()
 current_price = get_current_price()
 
-# --- Metrics Display ---
+# --- Display Metrics ---
 col1, col2, col3 = st.columns(3)
 col1.metric("Price", f"{current_price:.2f}" if current_price else "Fetching…")
 col2.metric("Trend Signal", trend)
@@ -160,4 +170,4 @@ if not df.empty:
     st.plotly_chart(fig, use_container_width=True)
 
 # --- Footer ---
-st.caption("💡 Multi-Timeframe + SMC + EMA + RSI + Volume Spike Analysis | High-Probability Sniper Signals | Data: Binance API")
+st.caption("💡 Multi-Timeframe + SMC + EMA + RSI + Volume Spike Analysis | High-Probability Sniper Signals | Data: Binance.US API")
