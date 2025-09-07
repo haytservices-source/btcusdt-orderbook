@@ -50,14 +50,16 @@ def get_candles():
 
 # --- UI loop ---
 placeholder = st.empty()
+counter = 0  # for unique keys
 
 while True:
     df = get_candles()
 
     if df.empty:
         with placeholder.container():
-            st.warning("⚠️ No data received from Binance (Spot, Futures, US). Retrying…")
+            st.warning("⚠️ No data received from Binance (Spot, Futures, US). Retrying…", key=f"warn-{counter}")
         time.sleep(5)
+        counter += 1
         continue
 
     last_price = df["close"].iloc[-1]
@@ -65,16 +67,16 @@ while True:
     source = df.attrs.get("source", "Unknown")
 
     with placeholder.container():
-        # Metrics
+        # Metrics with unique keys
         st.subheader("Prediction")
         col1, col2, col3 = st.columns(3)
-        col1.metric("Price", f"{last_price:.2f}")
-        col2.metric("Prediction", prediction)
-        col3.metric("Confidence", f"{confidence:.2f}")
+        col1.metric("Price", f"{last_price:.2f}", key=f"price-{counter}")
+        col2.metric("Prediction", prediction, key=f"pred-{counter}")
+        col3.metric("Confidence", f"{confidence:.2f}", key=f"conf-{counter}")
 
         st.caption(f"✅ Data source: {source}")
 
-        # Candlestick chart
+        # Candlestick chart with unique key
         st.subheader("Live BTC/USDT 1m Candles")
         fig = go.Figure(data=[go.Candlestick(
             x=df["time"],
@@ -84,6 +86,7 @@ while True:
             close=df["close"]
         )])
         fig.update_layout(xaxis_rangeslider_visible=False, height=500)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"chart-{counter}")
 
-    time.sleep(2)  # refresh every 2 seconds
+    time.sleep(2)
+    counter += 1
