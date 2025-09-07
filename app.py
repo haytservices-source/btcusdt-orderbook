@@ -1,54 +1,56 @@
 import streamlit as st
-import requests
-import pandas as pd
-import plotly.graph_objects as go
+import websocket, json
+import threading
+
+st.set_page_config(page_title="💎 Golden Sniper Pro BTC/USDT Predictor", layout="wide")
+price_placeholder = st.empty()
+trend_placeholder = st.empty()
+conf_placeholder = st.empty()
+
+# Shared variable
+st.session_state.latest_price = 0
+
+def on_message(ws, message):
+    data = json.loads(message)
+    price = float(data['p'])
+    st.session_state.latest_price = price
+
+def start_ws():
+    ws = websocket.WebSocketApp(
+        "wss://stream.binance.us:9443/ws/btcusdt@trade",
+        on_message=on_message
+    )
+    ws.run_forever()
+
+# Start WebSocket in background thread
+if "ws_thread" not in st.session_state:
+    ws_thread = threading.Thread(target=start_ws, daemon=True)
+    ws_thread.start()
+    st.session_state.ws_thread = ws_thread
+
+# Display loop
 import time
-
-st.set_page_config(page_title="BTCUSDT Order Book", layout="wide")
-SYMBOL = "BTCUSDT"
-LIMIT = 20
-BASE_URL = "https://api.binance.us/api/v3"
-
-# Function to fetch order book
-def get_orderbook():
-    url = f"{BASE_URL}/depth?symbol={SYMBOL}&limit={LIMIT}"
-    response = requests.get(url)
-    data = response.json()
-
-    # Check if bids/asks exist
-    if 'bids' in data and 'asks' in data:
-        bids = pd.DataFrame(data['bids'], columns=['Price','Quantity']).astype(float)
-        asks = pd.DataFrame(data['asks'], columns=['Price','Quantity']).astype(float)
-        return bids, asks
-    else:
-        raise ValueError(f"Order book data not available: {data}")
-
-st.title("BTC/USDT Live Order Book (Binance US)")
-
-# Placeholder for updating the chart
-placeholder = st.empty()
-
 while True:
-    try:
-        bids, asks = get_orderbook()
-        
-        # Create figure
-        fig = go.Figure()
-        fig.add_trace(go.Bar(x=bids['Price'], y=bids['Quantity'], name='Bids', marker_color='green'))
-        fig.add_trace(go.Bar(x=asks['Price'], y=asks['Quantity'], name='Asks', marker_color='red'))
-        fig.update_layout(
-            title=f"{SYMBOL} Order Book (Top {LIMIT})",
-            barmode='overlay',
-            xaxis_title='Price',
-            yaxis_title='Quantity',
-            xaxis=dict(type='category'),
-        )
-        
-        # Update chart in place with a unique key
-        placeholder.plotly_chart(fig, use_container_width=True, key="orderbook_chart")
+    price = st.session_state.latest_price
+    if price == 0:
+        price_placeholder.text("Price: Fetching…")
+        trend_placeholder.text("Trend Signal: WAIT…")
+        conf_placeholder.text("Confidence: 0%")
+    else:
+        # Simple trend logic
+        if "prev_price" not in st.session_state:
+            st.session_state.prev_price = price
+        trend = "WAIT"
+        confidence = 50
+        if price > st.session_state.prev_price * 1.0005:
+            trend = "UP"
+            confidence = 80
+        elif price < st.session_state.prev_price * 0.9995:
+            trend = "DOWN"
+            confidence = 80
+        st.session_state.prev_price = price
 
-        time.sleep(1)
-    
-    except Exception as e:
-        st.error(f"Error fetching order book: {e}")
-        time.sleep(5)
+        price_placeholder.text(f"Price: ${price:,.2f}")
+        trend_placeholder.text(f"Trend Signal: {trend}")
+        conf_placeholder.text(f"Confidence: {confidence}%")
+    time.sleep(0.1)
