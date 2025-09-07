@@ -7,21 +7,26 @@ import time
 st.set_page_config(page_title="BTCUSDT Order Book", layout="wide")
 SYMBOL = "BTCUSDT"
 LIMIT = 20  # top 20 bids/asks
+BASE_URL = "https://api.binance.us/api/v3"
 
-# Function to fetch order book from Binance REST API
+# Function to fetch order book from Binance US
 def get_orderbook():
-    url = f"https://api.binance.com/api/v3/depth?symbol={SYMBOL}&limit={LIMIT}"
-    data = requests.get(url).json()
+    url = f"{BASE_URL}/depth?symbol={SYMBOL}&limit={LIMIT}"
+    response = requests.get(url)
+    data = response.json()
+    
+    # Make sure keys exist
+    if 'bids' not in data or 'asks' not in data:
+        raise ValueError("Order book data not available")
+    
     bids = pd.DataFrame(data['bids'], columns=['Price','Quantity']).astype(float)
     asks = pd.DataFrame(data['asks'], columns=['Price','Quantity']).astype(float)
     return bids, asks
 
-st.title("BTC/USDT Live Order Book")
+st.title("BTC/USDT Live Order Book (Binance US)")
 
-# Placeholder for live chart
 placeholder = st.empty()
 
-# Continuous loop to refresh every second
 while True:
     try:
         bids, asks = get_orderbook()
@@ -38,13 +43,9 @@ while True:
             xaxis=dict(type='category'),
         )
         
-        # Render chart in Streamlit
         placeholder.plotly_chart(fig, use_container_width=True)
-        
-        # Refresh every second
         time.sleep(1)
     
     except Exception as e:
         st.error(f"Error fetching order book: {e}")
         time.sleep(5)
-
