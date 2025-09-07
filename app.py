@@ -3,114 +3,81 @@ import requests
 import pandas as pd
 import plotly.graph_objects as go
 import time
-from datetime import datetime
 
-# ---------------------------
-# CONFIG
-# ---------------------------
+# ------------------------------
+# Helper Functions
+# ------------------------------
+def get_current_price():
+    url = "https://api.binance.us/api/v3/ticker/price?symbol=BTCUSDT"
+    try:
+        data = requests.get(url, timeout=5).json()
+        return float(data['price'])
+    except:
+        return None
+
+def get_candles(interval="1m", limit=50):
+    url = f"https://api.binance.us/api/v3/klines?symbol=BTCUSDT&interval={interval}&limit={limit}"
+    try:
+        data = requests.get(url, timeout=5).json()
+        df = pd.DataFrame(data, columns=[
+            "open_time", "open", "high", "low", "close", "volume",
+            "close_time", "qav", "num_trades", "taker_base_vol", "taker_quote_vol", "ignore"
+        ])
+        df['time'] = pd.to_datetime(df['open_time'], unit='ms')
+        df[['open','high','low','close']] = df[['open','high','low','close']].astype(float)
+        return df
+    except:
+        return pd.DataFrame()
+
+def analyze_trend(df):
+    if df.empty:
+        return "WAIT…", 0.0
+    # Example logic: RSI + EMA + Volume spike
+    df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
+    df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
+    df['rsi'] = 100 - (100 / (1 + df['close'].pct_change().rolling(14).mean() / df['close'].pct_change().rolling(14).std()))
+    last_close = df['close'].iloc[-1]
+    trend = "WAIT…"
+    confidence = 0.0
+
+    if last_close > df['ema20'].iloc[-1] and df['ema20'].iloc[-1] > df['ema50'].iloc[-1] and df['rsi'].iloc[-1] < 70:
+        trend = "UP"
+        confidence = 0.8
+    elif last_close < df['ema20'].iloc[-1] and df['ema20'].iloc[-1] < df['ema50'].iloc[-1] and df['rsi'].iloc[-1] > 30:
+        trend = "DOWN"
+        confidence = 0.7
+    else:
+        trend = "SIDEWAYS"
+        confidence = 0.5
+    return trend, confidence
+
+# ------------------------------
+# Streamlit Layout
+# ------------------------------
 st.set_page_config(page_title="💎 Golden Sniper Pro BTC/USDT Predictor", layout="wide")
 st.title("💎 Golden Sniper Pro BTC/USDT Predictor")
 
-# ---------------------------
-# PLACEHOLDERS
-# ---------------------------
+# Placeholders
 price_placeholder = st.empty()
 trend_placeholder = st.empty()
 confidence_placeholder = st.empty()
 chart_placeholder = st.empty()
 
-# ---------------------------
-# FUNCTIONS
-# ---------------------------
-
-BINANCE_URL = "https://api.binance.us/api/v3/klines"
-
-def get_klines(symbol="BTCUSDT", interval="1m", limit=100):
-    try:
-        url = f"{BINANCE_URL}?symbol={symbol}&interval={interval}&limit={limit}"
-        data = requests.get(url).json()
-        df = pd.DataFrame(data, columns=[
-            "time","open","high","low","close","volume","close_time",
-            "quote_asset_volume","number_of_trades","taker_buy_base",
-            "taker_buy_quote","ignore"
-        ])
-        df["time"] = pd.to_datetime(df["time"], unit="ms")
-        df[["open","high","low","close","volume"]] = df[["open","high","low","close","volume"]].astype(float)
-        return df
-    except Exception as e:
-        print("Error fetching klines:", e)
-        return pd.DataFrame()
-
-def calculate_indicators(df):
-    # EMA
-    df["EMA20"] = df["close"].ewm(span=20, adjust=False).mean()
-    df["EMA50"] = df["close"].ewm(span=50, adjust=False).mean()
-    # RSI
-    delta = df["close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -1*delta.clip(upper=0)
-    avg_gain = gain.rolling(14).mean()
-    avg_loss = loss.rolling(14).mean()
-    rs = avg_gain / avg_loss
-    df["RSI"] = 100 - (100 / (1 + rs))
-    # Volume spike
-    df["vol_avg"] = df["volume"].rolling(20).mean()
-    df["vol_spike"] = df["volume"] > 1.5 * df["vol_avg"]
-    return df
-
-def analyze_trend(df):
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-    trend = "WAIT…"
-    confidence = 0.0
-
-    # EMA trend
-    if last["EMA20"] > last["EMA50"]:
-        trend = "UP"
-        confidence += 0.3
-    elif last["EMA20"] < last["EMA50"]:
-        trend = "DOWN"
-        confidence += 0.3
-
-    # RSI filter
-    if last["RSI"] < 30:
-        trend = "UP (RSI oversold)"
-        confidence += 0.2
-    elif last["RSI"] > 70:
-        trend = "DOWN (RSI overbought)"
-        confidence += 0.2
-
-    # Volume spike confirmation
-    if last["vol_spike"]:
-        confidence += 0.3
-
-    confidence = min(confidence, 1.0)
-    return trend, confidence
-
-def get_current_price(symbol="BTCUSDT"):
-    try:
-        url = f"https://api.binance.us/api/v3/ticker/price?symbol={symbol}"
-        data = requests.get(url).json()
-        return float(data["price"])
-    except:
-        return None
-
-# ---------------------------
-# LIVE LOOP
-# ---------------------------
+# ------------------------------
+# Live Update Loop
+# ------------------------------
 while True:
-    # Fetch data
-    df = get_klines()
-    df = calculate_indicators(df)
-    trend, confidence = analyze_trend(df)
+    # Fetch Data
     price = get_current_price()
+    df = get_candles()
+    trend, confidence = analyze_trend(df)
 
-    # Update dashboard
+    # Update Metrics
     price_placeholder.metric("Price", f"${price:.2f}" if price else "Fetching…")
     trend_placeholder.metric("Trend Signal", trend)
-    confidence_placeholder.metric("Confidence", f"{confidence*100:.0f}%")
-    
-    # Update candlestick chart
+    confidence_placeholder.metric("Confidence", f"{int(confidence*100)}%")
+
+    # Update Chart
     if not df.empty:
         fig = go.Figure(data=[go.Candlestick(
             x=df["time"],
@@ -122,19 +89,19 @@ while True:
             decreasing_line_color='red'
         )])
 
-        # Add signal arrow
-        arrow = "➡️"
-        if "UP" in trend:
-            arrow = "⬆️"
-        elif "DOWN" in trend:
-            arrow = "⬇️"
-        elif "REVERSAL" in trend:
-            arrow = "⚡"
+        # Arrow annotation for trend
+        arrow_text = "➡️"
+        if trend == "UP":
+            arrow_text = "⬆️"
+        elif trend == "DOWN":
+            arrow_text = "⬇️"
+        elif trend == "SIDEWAYS":
+            arrow_text = "➡️"
 
         fig.add_annotation(
             x=df["time"].iloc[-1],
             y=df["close"].iloc[-1],
-            text=arrow,
+            text=arrow_text,
             showarrow=False,
             font=dict(size=25)
         )
@@ -144,7 +111,6 @@ while True:
             height=550,
             margin=dict(l=10, r=10, t=10, b=10)
         )
-
         chart_placeholder.plotly_chart(fig, use_container_width=True)
 
-    time.sleep(1)
+    time.sleep(1)  # Update every second
