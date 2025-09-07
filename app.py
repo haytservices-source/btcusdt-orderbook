@@ -1,48 +1,55 @@
 import streamlit as st
-import requests
 import pandas as pd
-from streamlit_autorefresh import st_autorefresh
+import asyncio
+import websockets
+import json
 
-# Page setup
-st.set_page_config(page_title="BTC/USDT Futures Order Book", layout="wide")
+st.set_page_config(page_title="BTC/USDT (USDⓈ-M Futures) Live Order Book Dashboard", layout="wide")
 st.title("BTC/USDT (USDⓈ-M Futures) Live Order Book Dashboard")
 
-# Auto-refresh every 0.5 seconds
-st_autorefresh(interval=500, key="refresh")
+# Placeholders for dynamic updates
+price_placeholder = st.empty()
+buyers_placeholder = st.empty()
+sellers_placeholder = st.empty()
+volume_placeholder = st.empty()
+orderbook_placeholder = st.empty()
 
-SYMBOL = "BTCUSDT"
-PRICE_URL = f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={SYMBOL}"
-ORDER_BOOK_URL = f"https://fapi.binance.com/fapi/v1/depth?symbol={SYMBOL}&limit=5"
+# Binance Futures WebSocket URL for top 5 depth updates (100ms)
+WS_URL = "wss://fstream.binance.com/ws/btcusdt@depth5@100ms"
 
-def fetch_data():
-    try:
-        # Fetch last price
-        price_data = requests.get(PRICE_URL, timeout=1).json()
-        price = float(price_data.get('price', 0))
+async def main():
+    async with websockets.connect(WS_URL) as ws:
+        while True:
+            try:
+                data = await ws.recv()
+                data_json = json.loads(data)
 
-        # Fetch order book
-        ob_data = requests.get(ORDER_BOOK_URL, timeout=1).json()
-        bids = ob_data.get('bids', [])
-        asks = ob_data.get('asks', [])
+                # Extract bids and asks
+                bids = data_json.get("b", [])  # list of [price, qty]
+                asks = data_json.get("a", [])
 
-        buyers_strength = sum(float(bid[1]) for bid in bids)
-        sellers_strength = sum(float(ask[1]) for ask in asks)
-        total_volume = buyers_strength + sellers_strength
+                # Calculate Buyers/Sellers Strength
+                buyers_strength = sum([float(bid[1]) for bid in bids])
+                sellers_strength = sum([float(ask[1]) for ask in asks])
+                total_volume = buyers_strength + sellers_strength
 
-        df_bids = pd.DataFrame(bids, columns=['Bid Price', 'Bid Qty'])
-        df_asks = pd.DataFrame(asks, columns=['Ask Price', 'Ask Qty'])
-        df_orderbook = pd.concat([df_bids, df_asks], axis=1)
-    except Exception as e:
-        price = buyers_strength = sellers_strength = total_volume = 0
-        df_orderbook = pd.DataFrame(columns=['Bid Price', 'Bid Qty', 'Ask Price', 'Ask Qty'])
-        st.error(f"Error fetching data: {e}")
+                # Current price: mid of top bid and ask
+                price = (float(bids[0][0]) + float(asks[0][0])) / 2 if bids and asks else 0.0
 
-    return price, buyers_strength, sellers_strength, total_volume, df_orderbook
+                # Prepare order book DataFrame
+                df_bids = pd.DataFrame(bids, columns=['Bid Price', 'Bid Qty'])
+                df_asks = pd.DataFrame(asks, columns=['Ask Price', 'Ask Qty'])
+                df_orderbook = pd.concat([df_bids, df_asks], axis=1)
 
-price, buyers_strength, sellers_strength, total_volume, df_orderbook = fetch_data()
+                # Update Streamlit placeholders
+                price_placeholder.markdown(f"**Price:** ${price:,.2f}")
+                buyers_placeholder.markdown(f"**Buyers Strength:** {buyers_strength:.4f} BTC")
+                sellers_placeholder.markdown(f"**Sellers Strength:** {sellers_strength:.4f} BTC")
+                volume_placeholder.markdown(f"**Total Volume (Top 5):** {total_volume:.4f} BTC")
+                orderbook_placeholder.table(df_orderbook)
 
-st.markdown(f"**Price:** ${price:,.2f}")
-st.markdown(f"**Buyers Strength:** {buyers_strength:.4f} BTC")
-st.markdown(f"**Sellers Strength:** {sellers_strength:.4f} BTC")
-st.markdown(f"**Total Volume (Top 5):** {total_volume:.4f} BTC")
-st.table(df_orderbook)
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+# Run the WebSocket loop in Streamlit
+asyncio.run(main())
