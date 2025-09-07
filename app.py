@@ -7,7 +7,7 @@ import time
 st.set_page_config(page_title="BTCUSDT Live Predictor", layout="wide")
 st.title("BTC/USDT Live Predictor")
 
-# --- Simple prediction logic ---
+# --- Prediction logic ---
 def get_prediction(prices):
     if len(prices) < 2:
         return "Waiting…", 0.0
@@ -18,28 +18,33 @@ def get_prediction(prices):
     else:
         return "SIDEWAYS ➡️", 0.5
 
-# --- Get live BTCUSDT candles from Binance ---
+# --- Get candles from Binance Spot or Futures ---
 def get_candles():
-    try:
-        url = "https://api.binance.com/api/v3/klines"
-        params = {"symbol": "BTCUSDT", "interval": "1m", "limit": 50}
-        r = requests.get(url, params=params, timeout=10)
-        data = r.json()
+    urls = [
+        "https://api.binance.com/api/v3/klines",         # Spot
+        "https://fapi.binance.com/fapi/v1/klines"        # Futures
+    ]
+    for url in urls:
+        try:
+            params = {"symbol": "BTCUSDT", "interval": "1m", "limit": 50}
+            r = requests.get(url, params=params, timeout=10)
+            data = r.json()
 
-        if not isinstance(data, list) or len(data) == 0:
-            return pd.DataFrame()  # empty
+            if not isinstance(data, list) or len(data) == 0:
+                continue
 
-        df = pd.DataFrame(data, columns=[
-            "time","open","high","low","close","volume",
-            "close_time","qav","num_trades","taker_base","taker_quote","ignore"
-        ])
-        df["time"] = pd.to_datetime(df["time"], unit="ms")
-        df[["open","high","low","close","volume"]] = df[["open","high","low","close","volume"]].astype(float)
-        return df
-    except Exception:
-        return pd.DataFrame()
+            df = pd.DataFrame(data, columns=[
+                "time","open","high","low","close","volume",
+                "close_time","qav","num_trades","taker_base","taker_quote","ignore"
+            ])
+            df["time"] = pd.to_datetime(df["time"], unit="ms")
+            df[["open","high","low","close","volume"]] = df[["open","high","low","close","volume"]].astype(float)
+            return df
+        except Exception:
+            continue
+    return pd.DataFrame()
 
-# --- UI Loop ---
+# --- UI loop ---
 placeholder = st.empty()
 
 while True:
@@ -47,7 +52,7 @@ while True:
 
     if df.empty:
         with placeholder.container():
-            st.warning("⚠️ No data received from Binance. Retrying…")
+            st.warning("⚠️ No data received from Binance (Spot & Futures). Retrying…")
         time.sleep(5)
         continue
 
@@ -74,4 +79,4 @@ while True:
         fig.update_layout(xaxis_rangeslider_visible=False, height=500)
         st.plotly_chart(fig, use_container_width=True)
 
-    time.sleep(2)  # refresh every 2s
+    time.sleep(2)  # refresh every 2 seconds
