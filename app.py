@@ -18,11 +18,12 @@ def get_prediction(prices):
     else:
         return "SIDEWAYS ➡️", 0.5
 
-# --- Get candles from Binance Spot or Futures ---
+# --- Get candles from Spot, Futures, or Binance.US ---
 def get_candles():
     urls = [
-        "https://api.binance.com/api/v3/klines",         # Spot
-        "https://fapi.binance.com/fapi/v1/klines"        # Futures
+        "https://api.binance.com/api/v3/klines",     # Binance Spot
+        "https://fapi.binance.com/fapi/v1/klines",   # Binance Futures
+        "https://api.binance.us/api/v3/klines"       # Binance US
     ]
     for url in urls:
         try:
@@ -39,6 +40,9 @@ def get_candles():
             ])
             df["time"] = pd.to_datetime(df["time"], unit="ms")
             df[["open","high","low","close","volume"]] = df[["open","high","low","close","volume"]].astype(float)
+
+            # Add source info
+            df.attrs["source"] = url
             return df
         except Exception:
             continue
@@ -52,12 +56,13 @@ while True:
 
     if df.empty:
         with placeholder.container():
-            st.warning("⚠️ No data received from Binance (Spot & Futures). Retrying…")
+            st.warning("⚠️ No data received from Binance (Spot, Futures, US). Retrying…")
         time.sleep(5)
         continue
 
     last_price = df["close"].iloc[-1]
     prediction, confidence = get_prediction(df["close"].tolist())
+    source = df.attrs.get("source", "Unknown")
 
     with placeholder.container():
         # Metrics
@@ -66,6 +71,8 @@ while True:
         col1.metric("Price", f"{last_price:.2f}")
         col2.metric("Prediction", prediction)
         col3.metric("Confidence", f"{confidence:.2f}")
+
+        st.caption(f"✅ Data source: {source}")
 
         # Candlestick chart
         st.subheader("Live BTC/USDT 1m Candles")
