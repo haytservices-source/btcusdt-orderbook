@@ -3,39 +3,29 @@ import requests
 import pandas as pd
 import time
 
-# -------------------------------
-# Streamlit Page Setup
-# -------------------------------
-st.set_page_config(page_title="BTC/USD Futures Live Dashboard", layout="wide")
+st.set_page_config(page_title="BTC/USD Futures Live Order Book Dashboard", layout="wide")
 st.title("BTC/USD (USDⓈ-M Futures) Live Order Book Dashboard")
 
-# -------------------------------
-# Binance Futures Symbol
-# -------------------------------
+# Symbol for Binance USDⓈ-M Futures BTC/USD perpetual
 SYMBOL = "BTCUSD_PERP"
 
-# URLs
+# API URLs
 ORDER_BOOK_URL = f"https://fapi.binance.com/fapi/v1/depth?symbol={SYMBOL}&limit=5"
 PRICE_URL = f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={SYMBOL}"
 
-# -------------------------------
 # Placeholders for dynamic updating
-# -------------------------------
 price_placeholder = st.empty()
 buyers_placeholder = st.empty()
 sellers_placeholder = st.empty()
 volume_placeholder = st.empty()
 orderbook_placeholder = st.empty()
 
-# -------------------------------
-# Function to fetch data
-# -------------------------------
 def fetch_data():
     # Fetch last traded price
     try:
         price_resp = requests.get(PRICE_URL, timeout=1)
         price_resp.raise_for_status()
-        price = float(price_resp.json()['price'])
+        price = float(price_resp.json().get('price', 0))
     except:
         price = 0.0
 
@@ -44,8 +34,8 @@ def fetch_data():
         ob_resp = requests.get(ORDER_BOOK_URL, timeout=1)
         ob_resp.raise_for_status()
         ob_data = ob_resp.json()
-        bids = ob_data['bids']  # list of [price, qty]
-        asks = ob_data['asks']
+        bids = ob_data.get('bids', [])  # list of [price, qty]
+        asks = ob_data.get('asks', [])
     except:
         bids, asks = [], []
 
@@ -61,9 +51,7 @@ def fetch_data():
 
     return price, buyers_strength, sellers_strength, total_volume, df_orderbook
 
-# -------------------------------
-# Dashboard Auto-Refresh
-# -------------------------------
+# Auto-refresh loop
 while True:
     price, buyers_strength, sellers_strength, total_volume, df_orderbook = fetch_data()
 
