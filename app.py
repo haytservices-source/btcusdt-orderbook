@@ -1,6 +1,9 @@
 import streamlit as st
-import websocket, json, threading
+import websocket
+import json
+import threading
 import pandas as pd
+import time
 
 st.set_page_config(page_title="💎 BTC/USDT Buyer vs Seller Dashboard", layout="wide")
 
@@ -14,43 +17,45 @@ volume_placeholder = st.empty()
 # Shared state
 if "latest_price" not in st.session_state:
     st.session_state.latest_price = 0
-if "bids" not in st.session_state:
-    st.session_state.bids = {}
-if "asks" not in st.session_state:
-    st.session_state.asks = {}
-if "connected" not in st.session_state:
-    st.session_state.connected = False
+if "bids_total" not in st.session_state:
+    st.session_state.bids_total = 0
+if "asks_total" not in st.session_state:
+    st.session_state.asks_total = 0
 
 # WebSocket callbacks
 def on_message(ws, message):
     data = json.loads(message)
-    if "p" in data:  # trade event
+    if "p" in data:
         st.session_state.latest_price = float(data["p"])
-        st.session_state.connected = True
+        st.session_state.bids_total += float(data["q"]) if data["m"] == False else 0
+        st.session_state.asks_total += float(data["q"]) if data["m"] == True else 0
 
-# Start WebSocket thread
+def on_error(ws, error):
+    print("WebSocket Error:", error)
+
+def on_close(ws, close_status_code, close_msg):
+    print("WebSocket closed")
+
 def start_ws():
     ws = websocket.WebSocketApp(
         "wss://stream.binance.us:9443/ws/btcusdt@trade",
-        on_message=on_message
+        on_message=on_message,
+        on_error=on_error,
+        on_close=on_close
     )
     ws.run_forever()
 
+# Start WebSocket in background
 if "ws_thread" not in st.session_state:
     ws_thread = threading.Thread(target=start_ws, daemon=True)
     ws_thread.start()
     st.session_state.ws_thread = ws_thread
 
-# Auto-refresh every 1 second
-st_autorefresh = st.experimental_singleton(lambda: None)  # Dummy placeholder
-st.experimental_rerun()
-
-# Display
-if not st.session_state.connected:
-    price_placeholder.text("Connecting to Binance US WebSocket…")
-    buy_strength_placeholder.text("Buyers: Loading…")
-    sell_strength_placeholder.text("Sellers: Loading…")
-    order_book_placeholder.text("Order Book: Loading…")
-    volume_placeholder.text("Volume: Loading…")
-else:
+# Live dashboard update
+while True:
     price_placeholder.markdown(f"### Price: ${st.session_state.latest_price:,.2f}")
+    buy_strength_placeholder.markdown(f"Buyers Strength: {st.session_state.bids_total:.4f} BTC")
+    sell_strength_placeholder.markdown(f"Sellers Strength: {st.session_state.asks_total:.4f} BTC")
+    volume_placeholder.markdown(f"Volume (last update): {st.session_state.bids_total + st.session_state.asks_total:.4f} BTC")
+    
+    time.sleep(1)
