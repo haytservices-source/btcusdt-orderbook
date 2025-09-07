@@ -3,14 +3,15 @@ import requests
 import pandas as pd
 from streamlit_autorefresh import st_autorefresh
 
-st.set_page_config(page_title="BTC/USD Futures Live Order Book", layout="wide")
-st.title("BTC/USD (USDⓈ-M Futures) Live Order Book Dashboard")
+# Page settings
+st.set_page_config(page_title="BTC/USDT Futures Live Order Book", layout="wide")
+st.title("BTC/USDT (USDⓈ-M Futures) Live Order Book Dashboard")
 
 # Auto-refresh every 0.5 seconds
 st_autorefresh(interval=500, key="refresh")
 
-# Symbol for Binance USDⓈ-M Futures BTC/USD perpetual
-SYMBOL = "BTCUSD_PERP"
+# Symbol for Binance USDⓈ-M Futures BTC/USDT perpetual
+SYMBOL = "BTCUSDT_PERP"
 
 # API URLs
 ORDER_BOOK_URL = f"https://fapi.binance.com/fapi/v1/depth?symbol={SYMBOL}&limit=5"
@@ -56,3 +57,4 @@ st.markdown(f"**Buyers Strength:** {buyers_strength:.4f} BTC")
 st.markdown(f"**Sellers Strength:** {sellers_strength:.4f} BTC")
 st.markdown(f"**Total Volume (Top 5):** {total_volume:.4f} BTC")
 st.table(df_orderbook)
+
