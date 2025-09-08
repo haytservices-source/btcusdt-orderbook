@@ -1,5 +1,4 @@
 streamlit
 pandas
-binance-futures-connector
-streamlit-autorefresh
 requests
+streamlit-autorefresh
