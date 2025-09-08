@@ -3,37 +3,24 @@ import requests
 import time
 
 st.set_page_config(page_title="BTC/USDT Live Price", layout="wide")
-st.title("BTC/USDT (USDⓈ-M Futures) Live Price")
+st.title("BTC/USDT Live Price (Binance US)")
 
 price_placeholder = st.empty()
 
 def get_price():
-    urls = [
-        "https://fapi.binance.com/fapi/v1/ticker/price?symbol=BTCUSDT",  # Futures
-        "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"     # Spot fallback
-    ]
-    headers = {"User-Agent": "Mozilla/5.0"}  # helps avoid blocking
+    try:
+        url = "https://api.binance.us/api/v3/ticker/price?symbol=BTCUSDT"
+        response = requests.get(url, timeout=3)
+        response.raise_for_status()
+        data = response.json()
+        return float(data['price'])
+    except Exception:
+        return None
 
-    for url in urls:
-        try:
-            response = requests.get(url, headers=headers, timeout=3)
-            response.raise_for_status()
-            data = response.json()
-            return float(data['price']), url
-        except Exception:
-            continue
-
-    return None, None
-
-# Auto-refresh loop
 while True:
-    price, source = get_price()
+    price = get_price()
     if price:
-        price_placeholder.metric(
-            label=f"BTC/USDT Price ({'Futures' if 'fapi' in source else 'Spot'})",
-            value=f"${price:,.2f}"
-        )
+        price_placeholder.metric(label="BTC/USDT Price", value=f"${price:,.2f}")
     else:
-        price_placeholder.text("❌ Failed to fetch price from Binance APIs.")
-
-    time.sleep(1)  # update every second
+        price_placeholder.text("❌ Failed to fetch price from Binance US API.")
+    time.sleep(1)
