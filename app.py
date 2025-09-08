@@ -2,25 +2,38 @@ import streamlit as st
 import requests
 import time
 
+st.set_page_config(page_title="BTC/USDT Live Price", layout="wide")
 st.title("BTC/USDT (USDⓈ-M Futures) Live Price")
 
 price_placeholder = st.empty()
 
-# Function to fetch BTCUSDT price from Binance Futures API
 def get_price():
-    try:
-        url = "https://fapi.binance.com/fapi/v1/ticker/price?symbol=BTCUSDT"
-        response = requests.get(url, timeout=5)
-        data = response.json()
-        return float(data['price'])
-    except Exception as e:
-        return None
+    urls = [
+        "https://fapi.binance.com/fapi/v1/ticker/price?symbol=BTCUSDT",  # Futures
+        "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"     # Spot fallback
+    ]
+    headers = {"User-Agent": "Mozilla/5.0"}  # helps avoid blocking
 
-# Auto-refresh every 0.5 second
+    for url in urls:
+        try:
+            response = requests.get(url, headers=headers, timeout=3)
+            response.raise_for_status()
+            data = response.json()
+            return float(data['price']), url
+        except Exception:
+            continue
+
+    return None, None
+
+# Auto-refresh loop
 while True:
-    price = get_price()
+    price, source = get_price()
     if price:
-        price_placeholder.metric(label="BTC/USDT Price", value=f"${price:,.2f}")
+        price_placeholder.metric(
+            label=f"BTC/USDT Price ({'Futures' if 'fapi' in source else 'Spot'})",
+            value=f"${price:,.2f}"
+        )
     else:
-        price_placeholder.text("Failed to fetch price.")
-    time.sleep(0.5)
+        price_placeholder.text("❌ Failed to fetch price from Binance APIs.")
+
+    time.sleep(1)  # update every second
