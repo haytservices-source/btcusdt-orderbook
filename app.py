@@ -1,33 +1,26 @@
+import streamlit as st
 import requests
-import json
+import time
 
-# === CONFIG ===
-OANDA_ACCOUNT_ID = "YOUR_ACCOUNT_ID"
-OANDA_API_KEY = "YOUR_API_KEY"
-OANDA_URL = "https://api-fxpractice.oanda.com/v3"
+st.title("BTC/USDT (USDⓈ-M Futures) Live Price")
 
-headers = {
-    "Authorization": f"Bearer {OANDA_API_KEY}",
-    "Content-Type": "application/json"
-}
+price_placeholder = st.empty()
 
-# === Live Price ===
-def get_live_price():
-    url = f"{OANDA_URL}/accounts/{OANDA_ACCOUNT_ID}/pricing?instruments=XAU_USD"
-    response = requests.get(url, headers=headers)
-    data = response.json()
-    price = data['prices'][0]
-    print(f"XAU/USD Live Price: Bid: {price['bids'][0]['price']} / Ask: {price['asks'][0]['price']}")
+# Function to fetch BTCUSDT price from Binance Futures API
+def get_price():
+    try:
+        url = "https://fapi.binance.com/fapi/v1/ticker/price?symbol=BTCUSDT"
+        response = requests.get(url, timeout=5)
+        data = response.json()
+        return float(data['price'])
+    except Exception as e:
+        return None
 
-# === Order Book ===
-def get_order_book():
-    url = f"{OANDA_URL}/instruments/XAU_USD/orderBook"
-    response = requests.get(url, headers=headers)
-    data = response.json()
-    print("\n--- XAU/USD Order Book ---")
-    for bucket in data['orderBook']['buckets'][:10]:  # top 10 buckets
-        print(f"Price: {bucket['price']}, Long %: {bucket['longCountPercent']}, Short %: {bucket['shortCountPercent']}")
-
-if __name__ == "__main__":
-    get_live_price()
-    get_order_book()
+# Auto-refresh every 0.5 second
+while True:
+    price = get_price()
+    if price:
+        price_placeholder.metric(label="BTC/USDT Price", value=f"${price:,.2f}")
+    else:
+        price_placeholder.text("Failed to fetch price.")
+    time.sleep(0.5)
