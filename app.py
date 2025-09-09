@@ -1,134 +1,139 @@
 import streamlit as st
 import requests
 import pandas as pd
-import numpy as np
-import time
 import plotly.graph_objects as go
+from streamlit_autorefresh import st_autorefresh
 
-st.set_page_config(page_title="BTC/USDT Order Book Dashboard", layout="wide")
-st.title("📊 BTC/USDT Live Order Book (Binance US)")
+# --- Auto-refresh every 2 seconds ---
+st_autorefresh(interval=2000, key="refresh")
 
-# -----------------------------
-# API fetch function
-# -----------------------------
-def get_orderbook(symbol="BTCUSDT", limit=50):
-    url = f"https://api.binance.us/api/v3/depth?symbol={symbol}&limit={limit}"
+st.set_page_config(page_title="BTC/USDT Advanced Order Flow", layout="wide")
+st.title("📊 BTC/USDT Advanced Order Flow Dashboard")
+
+# --- Fetch Order Book ---
+def get_orderbook(limit=200):
+    url = "https://api.binance.us/api/v3/depth"
+    params = {"symbol": "BTCUSDT", "limit": limit}
     try:
-        r = requests.get(url, timeout=5)
-        r.raise_for_status()
-        data = r.json()
-        bids = [(float(p), float(q)) for p, q in data["bids"]]
-        asks = [(float(p), float(q)) for p, q in data["asks"]]
+        res = requests.get(url, params=params, timeout=3)
+        res.raise_for_status()
+        data = res.json()
+        bids = pd.DataFrame(data["bids"], columns=["price", "qty"], dtype=float)
+        asks = pd.DataFrame(data["asks"], columns=["price", "qty"], dtype=float)
         return bids, asks
-    except Exception as e:
-        st.error(f"Error fetching order book: {e}")
-        return [], []
+    except Exception:
+        return None, None
 
-# -----------------------------
-# Pressure calculation
-# -----------------------------
-def analyze_pressure(bids, asks):
-    total_bid_vol = sum(q for _, q in bids)
-    total_ask_vol = sum(q for _, q in asks)
+# --- Fetch 1m Candlestick Data ---
+def get_candles(limit=50):
+    url = "https://api.binance.us/api/v3/klines"
+    params = {"symbol": "BTCUSDT", "interval": "1m", "limit": limit}
+    try:
+        res = requests.get(url, params=params, timeout=3)
+        res.raise_for_status()
+        data = res.json()
+        df = pd.DataFrame(data, columns=[
+            "time","open","high","low","close","volume",
+            "c","q","n","taker_base","taker_quote","ignore"
+        ], dtype=float)
+        df["time"] = pd.to_datetime(df["time"], unit="ms")
+        return df[["time","open","high","low","close","volume"]]
+    except Exception:
+        return None
 
-    imbalance = (total_bid_vol - total_ask_vol) / (total_bid_vol + total_ask_vol + 1e-9)
+# --- Get Data ---
+bids, asks = get_orderbook()
+candles = get_candles()
 
-    if imbalance > 0.2:
-        bias = "🔥 Buyers Strong (Bullish)"
-    elif imbalance < -0.2:
-        bias = "💀 Sellers Strong (Bearish)"
-    else:
-        bias = "➖ Neutral / Sideways"
+if bids is None or asks is None or candles is None:
+    st.error("❌ Failed to fetch market data.")
+    st.stop()
 
-    return total_bid_vol, total_ask_vol, imbalance, bias
+# --- Mid Price ---
+mid_price = (bids["price"].max() + asks["price"].min()) / 2
 
-# -----------------------------
-# Whale wall detection
-# -----------------------------
-def detect_walls(levels, top_n=3):
-    """Find top N largest liquidity walls"""
-    df = pd.DataFrame(levels, columns=["price", "volume"])
-    df["score"] = df["volume"] / df["volume"].sum()
-    df = df.sort_values("volume", ascending=False).head(top_n)
-    return df
+# --- Weighted Pressure ---
+bids["weight"] = bids.apply(lambda row: row["qty"] / max(1, mid_price - row["price"]), axis=1)
+asks["weight"] = asks.apply(lambda row: row["qty"] / max(1, row["price"] - mid_price), axis=1)
 
-# -----------------------------
-# Live dashboard
-# -----------------------------
-refresh_rate = 2  # seconds
-placeholder = st.empty()
+weighted_bids = bids["weight"].sum()
+weighted_asks = asks["weight"].sum()
 
-while True:
-    bids, asks = get_orderbook(limit=50)
+if weighted_bids + weighted_asks > 0:
+    wpi = (weighted_bids - weighted_asks) / (weighted_bids + weighted_asks)
+else:
+    wpi = 0
 
-    if not bids or not asks:
-        time.sleep(refresh_rate)
-        continue
+# --- Bias ---
+if wpi > 0.25:
+    bias = "🔥 Buyers Dominant (Bullish)"
+    confidence = f"{wpi*100:.1f}%"
+elif wpi < -0.25:
+    bias = "🔴 Sellers Dominant (Bearish)"
+    confidence = f"{abs(wpi)*100:.1f}%"
+else:
+    bias = "⚖️ Neutral / Sideways"
+    confidence = f"{abs(wpi)*100:.1f}%"
 
-    # Pressure analysis
-    total_bid, total_ask, imbalance, bias = analyze_pressure(bids, asks)
+# --- Whale Detection ---
+big_bid = bids.loc[bids["qty"].idxmax()]
+big_ask = asks.loc[asks["qty"].idxmax()]
 
-    # Walls
-    bid_walls = detect_walls(bids, top_n=3)
-    ask_walls = detect_walls(asks, top_n=3)
+nearest_bid = bids[bids["price"] < mid_price].sort_values("price", ascending=False).head(1)
+nearest_ask = asks[asks["price"] > mid_price].sort_values("price", ascending=True).head(1)
 
-    # Plot order book depth chart
-    bid_prices, bid_vols = zip(*bids)
-    ask_prices, ask_vols = zip(*asks)
+nearest_bid_price, nearest_bid_qty = nearest_bid.iloc[0]["price"], nearest_bid.iloc[0]["qty"]
+nearest_ask_price, nearest_ask_qty = nearest_ask.iloc[0]["price"], nearest_ask.iloc[0]["qty"]
 
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=bid_prices, y=bid_vols, name="Bids", marker_color="green"))
-    fig.add_trace(go.Bar(x=ask_prices, y=ask_vols, name="Asks", marker_color="red"))
+# --- Projection ---
+if nearest_bid_qty > nearest_ask_qty and wpi > 0:
+    projection = f"📈 Likely Upward → Next Zone ${nearest_ask_price:,.0f}"
+elif nearest_ask_qty > nearest_bid_qty and wpi < 0:
+    projection = f"📉 Likely Downward → Next Zone ${nearest_bid_price:,.0f}"
+else:
+    projection = f"🤔 Unclear → Range ${nearest_bid_price:,.0f} - ${nearest_ask_price:,.0f}"
 
-    fig.update_layout(
-        title="Order Book Heatmap",
-        xaxis_title="Price",
-        yaxis_title="Volume",
-        template="plotly_dark",
-        barmode="overlay",
+# --- Show Metrics ---
+col1, col2, col3 = st.columns(3)
+col1.metric("Mid Price", f"${mid_price:,.2f}")
+col2.metric("Weighted Buy Pressure", f"{weighted_bids:,.2f}")
+col3.metric("Weighted Sell Pressure", f"{weighted_asks:,.2f}")
+
+st.subheader(f"Market Bias → {bias} | Confidence: {confidence}")
+st.subheader(f"Projection → {projection}")
+
+st.caption(f"🐋 Biggest Buy Wall: {big_bid['qty']:.2f} BTC @ ${big_bid['price']:.0f} | "
+           f"🐋 Biggest Sell Wall: {big_ask['qty']:.2f} BTC @ ${big_ask['price']:.0f}")
+
+# --- Layout with two charts ---
+col_left, col_right = st.columns(2)
+
+# --- Heatmap Chart ---
+with col_left:
+    fig1 = go.Figure()
+    fig1.add_trace(go.Bar(x=bids["price"], y=bids["qty"],
+                          name="Bids", marker=dict(color="green"), opacity=0.6))
+    fig1.add_trace(go.Bar(x=asks["price"], y=asks["qty"],
+                          name="Asks", marker=dict(color="red"), opacity=0.6))
+    fig1.update_layout(
+        title="Liquidity Heatmap (Order Book Depth)",
+        xaxis_title="Price", yaxis_title="Quantity",
+        barmode="overlay", height=500
+    )
+    st.plotly_chart(fig1, use_container_width=True)
+
+# --- Candlestick Chart ---
+with col_right:
+    fig2 = go.Figure(data=[go.Candlestick(
+        x=candles["time"],
+        open=candles["open"], high=candles["high"],
+        low=candles["low"], close=candles["close"],
+        name="Price"
+    )])
+    fig2.update_layout(
+        title="BTC/USDT 1m Candles",
+        xaxis_title="Time",
+        yaxis_title="Price",
         height=500
     )
-
-    # -----------------------------
-    # Update Dashboard UI
-    # -----------------------------
-    with placeholder.container():
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.metric("Total Buy Volume", f"{total_bid:,.2f}")
-            st.metric("Total Sell Volume", f"{total_ask:,.2f}")
-            st.metric("Imbalance", f"{imbalance*100:.1f}%")
-            st.subheader(f"📈 Market Bias: {bias}")
-
-        with col2:
-            st.plotly_chart(fig, use_container_width=True)
-
-        # -----------------------------
-        # Liquidity Walls Section
-        # -----------------------------
-        st.subheader("🛑 Major Liquidity Walls")
-
-        c1, c2 = st.columns(2)
-
-        with c1:
-            st.write("### 🟢 Top Buy Walls (Support)")
-            for i, row in bid_walls.iterrows():
-                wall_strength = row['score']
-                label = "🚀 Strongest Support" if i == bid_walls.index[0] else ""
-                st.progress(
-                    min(1.0, wall_strength),
-                    text=f"${row['price']:,.2f} | Vol: {row['volume']:,.2f} {label}"
-                )
-
-        with c2:
-            st.write("### 🔴 Top Sell Walls (Resistance)")
-            for i, row in ask_walls.iterrows():
-                wall_strength = row['score']
-                label = "🛑 Strongest Resistance" if i == ask_walls.index[0] else ""
-                st.progress(
-                    min(1.0, wall_strength),
-                    text=f"${row['price']:,.2f} | Vol: {row['volume']:,.2f} {label}"
-                )
-
-    time.sleep(refresh_rate)
+    st.plotly_chart(fig2, use_container_width=True)
