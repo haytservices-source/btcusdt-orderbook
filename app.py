@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import time
+import plotly.graph_objects as go
 
 st.set_page_config(page_title="BTC/USDT Order Book Dashboard", layout="wide")
 st.title("BTC/USDT Live Order Book (Binance US)")
@@ -11,6 +12,7 @@ price_placeholder = st.empty()
 agg_placeholder = st.empty()
 bids_placeholder = st.empty()
 asks_placeholder = st.empty()
+chart_placeholder = st.empty()
 
 # ------------------ Binance US Order Book API ------------------
 BINANCE_OB_URL = "https://api.binance.us/api/v3/depth?symbol=BTCUSDT&limit=20"
@@ -29,7 +31,11 @@ def get_order_book():
 def get_mid_price(bids, asks):
     return (bids['Price'].iloc[0] + asks['Price'].iloc[0]) / 2
 
-# ------------------ Draw static parts once ------------------
+# ------------------ Keep history for chart ------------------
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+# ------------------ Draw static headers once ------------------
 bids_placeholder.subheader("Top 10 Bids")
 asks_placeholder.subheader("Top 10 Asks")
 
@@ -60,7 +66,7 @@ while True:
             unsafe_allow_html=True
         )
 
-        # Update bids/asks tables
+        # Update tables
         bids_placeholder.dataframe(
             bids.head(10).style.format({"Price": "${:,.2f}", "Quantity": "{:,.4f}"}),
             use_container_width=True
@@ -69,8 +75,20 @@ while True:
             asks.head(10).style.format({"Price": "${:,.2f}", "Quantity": "{:,.4f}"}),
             use_container_width=True
         )
-    else:
-        price_placeholder.text("❌ Failed to fetch order book from Binance US API.")
 
-    # Wait 2 seconds before updating numbers again
-    time.sleep(2)
+        # ------------------ Update history & chart ------------------
+        st.session_state.history.append(
+            {"price": mid_price, "bids": total_bid_qty, "asks": total_ask_qty}
+        )
+
+        # Keep last 30 points only
+        st.session_state.history = st.session_state.history[-30:]
+
+        df_hist = pd.DataFrame(st.session_state.history)
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            y=df_hist["bids"], mode="lines+markers", name="Buy Volume", line=dict(color="green")
+        ))
+        fig.add_trace(go.Scatter(
+            y=df_hist["asks"], mode="lines+markers", name="Sell Volume", line_
