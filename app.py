@@ -8,7 +8,9 @@ import plotly.graph_objects as go
 st.set_page_config(page_title="BTC/USDT Order Book Dashboard", layout="wide")
 st.title("📊 BTC/USDT Live Order Book (Binance US)")
 
+# -----------------------------
 # API fetch function
+# -----------------------------
 def get_orderbook(symbol="BTCUSDT", limit=50):
     url = f"https://api.binance.us/api/v3/depth?symbol={symbol}&limit={limit}"
     try:
@@ -22,7 +24,9 @@ def get_orderbook(symbol="BTCUSDT", limit=50):
         st.error(f"Error fetching order book: {e}")
         return [], []
 
+# -----------------------------
 # Pressure calculation
+# -----------------------------
 def analyze_pressure(bids, asks):
     total_bid_vol = sum(q for _, q in bids)
     total_ask_vol = sum(q for _, q in asks)
@@ -38,7 +42,9 @@ def analyze_pressure(bids, asks):
 
     return total_bid_vol, total_ask_vol, imbalance, bias
 
+# -----------------------------
 # Whale wall detection
+# -----------------------------
 def detect_walls(levels, top_n=3):
     """Find top N largest liquidity walls"""
     df = pd.DataFrame(levels, columns=["price", "volume"])
@@ -46,7 +52,9 @@ def detect_walls(levels, top_n=3):
     df = df.sort_values("volume", ascending=False).head(top_n)
     return df
 
+# -----------------------------
 # Live dashboard
+# -----------------------------
 refresh_rate = 2  # seconds
 placeholder = st.empty()
 
@@ -81,6 +89,9 @@ while True:
         height=500
     )
 
+    # -----------------------------
+    # Update Dashboard UI
+    # -----------------------------
     with placeholder.container():
         col1, col2 = st.columns(2)
 
@@ -93,15 +104,31 @@ while True:
         with col2:
             st.plotly_chart(fig, use_container_width=True)
 
+        # -----------------------------
+        # Liquidity Walls Section
+        # -----------------------------
         st.subheader("🛑 Major Liquidity Walls")
+
         c1, c2 = st.columns(2)
 
         with c1:
-            st.write("**Top Buy Walls (Support):**")
-            st.dataframe(bid_walls)
+            st.write("### 🟢 Top Buy Walls (Support)")
+            for i, row in bid_walls.iterrows():
+                wall_strength = row['score']
+                label = "🚀 Strongest Support" if i == bid_walls.index[0] else ""
+                st.progress(
+                    min(1.0, wall_strength),
+                    text=f"${row['price']:,.2f} | Vol: {row['volume']:,.2f} {label}"
+                )
 
         with c2:
-            st.write("**Top Sell Walls (Resistance):**")
-            st.dataframe(ask_walls)
+            st.write("### 🔴 Top Sell Walls (Resistance)")
+            for i, row in ask_walls.iterrows():
+                wall_strength = row['score']
+                label = "🛑 Strongest Resistance" if i == ask_walls.index[0] else ""
+                st.progress(
+                    min(1.0, wall_strength),
+                    text=f"${row['price']:,.2f} | Vol: {row['volume']:,.2f} {label}"
+                )
 
     time.sleep(refresh_rate)
