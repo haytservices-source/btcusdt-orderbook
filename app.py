@@ -7,13 +7,13 @@ from streamlit_autorefresh import st_autorefresh
 # --- Auto-refresh every 2 seconds ---
 st_autorefresh(interval=2000, key="refresh")
 
-st.set_page_config(page_title="BTC/USDT Order Book Dashboard", layout="wide")
-st.title("📊 BTC/USDT Order Book (Binance US)")
+st.set_page_config(page_title="BTC/USDT Advanced Order Book", layout="wide")
+st.title("📊 BTC/USDT Advanced Order Flow Dashboard")
 
-# --- Get Order Book Data ---
-def get_orderbook():
+# --- Fetch Order Book ---
+def get_orderbook(limit=100):
     url = "https://api.binance.us/api/v3/depth"
-    params = {"symbol": "BTCUSDT", "limit": 50}
+    params = {"symbol": "BTCUSDT", "limit": limit}
     try:
         res = requests.get(url, params=params, timeout=3)
         res.raise_for_status()
@@ -30,54 +30,61 @@ if bids is None or asks is None:
     st.error("❌ Failed to fetch order book.")
     st.stop()
 
-# --- Calculate Buy/Sell Pressure ---
-total_bids = bids["qty"].sum()
-total_asks = asks["qty"].sum()
+# --- Calculate Pressure with Distance Weighting ---
+mid_price = (bids["price"].max() + asks["price"].min()) / 2
 
-if total_bids + total_asks > 0:
-    imbalance = (total_bids - total_asks) / (total_bids + total_asks)
+# Weight = quantity / distance_from_mid
+bids["weight"] = bids.apply(lambda row: row["qty"] / max(1, mid_price - row["price"]), axis=1)
+asks["weight"] = asks.apply(lambda row: row["qty"] / max(1, row["price"] - mid_price), axis=1)
+
+weighted_bids = bids["weight"].sum()
+weighted_asks = asks["weight"].sum()
+
+if weighted_bids + weighted_asks > 0:
+    wpi = (weighted_bids - weighted_asks) / (weighted_bids + weighted_asks)
 else:
-    imbalance = 0
+    wpi = 0
 
-if imbalance > 0.2:
-    pressure_text = "🔥 Buyers Aggressive (Bullish)"
-elif imbalance < -0.2:
-    pressure_text = "🔴 Sellers Aggressive (Bearish)"
+# --- Bias Interpretation ---
+if wpi > 0.25:
+    bias = "🔥 Buyers Dominant (Bullish)"
+    confidence = f"{wpi*100:.1f}%"
+elif wpi < -0.25:
+    bias = "🔴 Sellers Dominant (Bearish)"
+    confidence = f"{abs(wpi)*100:.1f}%"
 else:
-    pressure_text = "⚖️ Balanced (Sideways)"
+    bias = "⚖️ Neutral / Sideways"
+    confidence = f"{abs(wpi)*100:.1f}%"
 
-# --- Show Live Pressure ---
+# --- Whale Wall Detection ---
+big_bid = bids.loc[bids["qty"].idxmax()]
+big_ask = asks.loc[asks["qty"].idxmax()]
+whale_msg = f"🐋 Biggest Buy Wall: {big_bid['qty']:.2f} BTC @ ${big_bid['price']:.0f} | "
+whale_msg += f"🐋 Biggest Sell Wall: {big_ask['qty']:.2f} BTC @ ${big_ask['price']:.0f}"
+
+# --- Show Metrics ---
 col1, col2, col3 = st.columns(3)
-col1.metric("Buy Volume", f"{total_bids:,.2f}")
-col2.metric("Sell Volume", f"{total_asks:,.2f}")
-col3.metric("Imbalance", f"{imbalance*100:.1f}%")
-st.subheader(f"Market Pressure: {pressure_text}")
+col1.metric("Mid Price", f"${mid_price:,.2f}")
+col2.metric("Weighted Buy Pressure", f"{weighted_bids:,.2f}")
+col3.metric("Weighted Sell Pressure", f"{weighted_asks:,.2f}")
 
-# --- Heatmap Zones (Top 5 Walls) ---
-top_bid = bids.sort_values("qty", ascending=False).head(5)
-top_ask = asks.sort_values("qty", ascending=False).head(5)
+st.subheader(f"Market Bias → {bias} | Confidence: {confidence}")
+st.caption(whale_msg)
 
-st.subheader("Liquidity Heatmap Zones")
-heatmap_df = pd.concat([
-    top_bid.assign(side="Buy Wall"),
-    top_ask.assign(side="Sell Wall")
-])
-st.table(heatmap_df)
-
-# --- Plot Heatmap ---
+# --- Heatmap Chart ---
 fig = go.Figure()
 
 fig.add_trace(go.Bar(
     x=bids["price"], y=bids["qty"],
-    name="Bids", marker_color="green", opacity=0.6
+    name="Bids", marker=dict(color="green"), opacity=0.6
 ))
 fig.add_trace(go.Bar(
     x=asks["price"], y=asks["qty"],
-    name="Asks", marker_color="red", opacity=0.6
+    name="Asks", marker=dict(color="red"), opacity=0.6
 ))
 
 fig.update_layout(
-    title="Order Book Heatmap (Top 50 Levels)",
+    title="Liquidity Heatmap (Order Book Depth)",
     xaxis_title="Price",
     yaxis_title="Quantity",
     barmode="overlay",
