@@ -1,4 +1,6 @@
 streamlit
 pandas
-requests
+binance-futures-connector
 streamlit-autorefresh
+requests
+plotly
