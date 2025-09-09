@@ -11,7 +11,7 @@ st.set_page_config(page_title="BTC/USDT Advanced Order Book", layout="wide")
 st.title("📊 BTC/USDT Advanced Order Flow Dashboard")
 
 # --- Fetch Order Book ---
-def get_orderbook(limit=100):
+def get_orderbook(limit=200):
     url = "https://api.binance.us/api/v3/depth"
     params = {"symbol": "BTCUSDT", "limit": limit}
     try:
@@ -30,10 +30,10 @@ if bids is None or asks is None:
     st.error("❌ Failed to fetch order book.")
     st.stop()
 
-# --- Calculate Pressure with Distance Weighting ---
+# --- Mid Price ---
 mid_price = (bids["price"].max() + asks["price"].min()) / 2
 
-# Weight = quantity / distance_from_mid
+# --- Weighted Pressure (distance-weighted liquidity) ---
 bids["weight"] = bids.apply(lambda row: row["qty"] / max(1, mid_price - row["price"]), axis=1)
 asks["weight"] = asks.apply(lambda row: row["qty"] / max(1, row["price"] - mid_price), axis=1)
 
@@ -59,8 +59,20 @@ else:
 # --- Whale Wall Detection ---
 big_bid = bids.loc[bids["qty"].idxmax()]
 big_ask = asks.loc[asks["qty"].idxmax()]
-whale_msg = f"🐋 Biggest Buy Wall: {big_bid['qty']:.2f} BTC @ ${big_bid['price']:.0f} | "
-whale_msg += f"🐋 Biggest Sell Wall: {big_ask['qty']:.2f} BTC @ ${big_ask['price']:.0f}"
+
+nearest_bid = bids[bids["price"] < mid_price].sort_values("price", ascending=False).head(1)
+nearest_ask = asks[asks["price"] > mid_price].sort_values("price", ascending=True).head(1)
+
+nearest_bid_price, nearest_bid_qty = nearest_bid.iloc[0]["price"], nearest_bid.iloc[0]["qty"]
+nearest_ask_price, nearest_ask_qty = nearest_ask.iloc[0]["price"], nearest_ask.iloc[0]["qty"]
+
+# --- Projection Logic ---
+if nearest_bid_qty > nearest_ask_qty and wpi > 0:
+    projection = f"📈 Likely Upward → Next Zone ${nearest_ask_price:,.0f}"
+elif nearest_ask_qty > nearest_bid_qty and wpi < 0:
+    projection = f"📉 Likely Downward → Next Zone ${nearest_bid_price:,.0f}"
+else:
+    projection = f"🤔 Unclear → Range ${nearest_bid_price:,.0f} - ${nearest_ask_price:,.0f}"
 
 # --- Show Metrics ---
 col1, col2, col3 = st.columns(3)
@@ -69,7 +81,10 @@ col2.metric("Weighted Buy Pressure", f"{weighted_bids:,.2f}")
 col3.metric("Weighted Sell Pressure", f"{weighted_asks:,.2f}")
 
 st.subheader(f"Market Bias → {bias} | Confidence: {confidence}")
-st.caption(whale_msg)
+st.subheader(f"Projection → {projection}")
+
+st.caption(f"🐋 Biggest Buy Wall: {big_bid['qty']:.2f} BTC @ ${big_bid['price']:.0f} | "
+           f"🐋 Biggest Sell Wall: {big_ask['qty']:.2f} BTC @ ${big_ask['price']:.0f}")
 
 # --- Heatmap Chart ---
 fig = go.Figure()
