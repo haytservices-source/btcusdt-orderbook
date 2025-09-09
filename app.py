@@ -24,10 +24,10 @@ def get_orderbook(limit=200):
     except Exception:
         return None, None
 
-# --- Fetch 1m Candlestick Data ---
-def get_candles(limit=50):
+# --- Fetch Candlestick Data (multi-timeframe) ---
+def get_candles(interval="1m", limit=100):
     url = "https://api.binance.us/api/v3/klines"
-    params = {"symbol": "BTCUSDT", "interval": "1m", "limit": limit}
+    params = {"symbol": "BTCUSDT", "interval": interval, "limit": limit}
     try:
         res = requests.get(url, params=params, timeout=3)
         res.raise_for_status()
@@ -41,9 +41,13 @@ def get_candles(limit=50):
     except Exception:
         return None
 
+# --- Timeframe Selector ---
+timeframes = ["1m", "5m", "15m", "1h", "4h"]
+selected_tf = st.selectbox("⏳ Select Timeframe", timeframes, index=0)
+
 # --- Get Data ---
 bids, asks = get_orderbook()
-candles = get_candles()
+candles = get_candles(selected_tf, 100)
 
 if bids is None or asks is None or candles is None:
     st.error("❌ Failed to fetch market data.")
@@ -108,7 +112,7 @@ st.caption(f"🐋 Biggest Buy Wall: {big_bid['qty']:.2f} BTC @ ${big_bid['price'
 # --- Layout with two charts ---
 col_left, col_right = st.columns(2)
 
-# --- Heatmap Chart ---
+# --- Heatmap Chart (Order Book) ---
 with col_left:
     fig1 = go.Figure()
     fig1.add_trace(go.Bar(x=bids["price"], y=bids["qty"],
@@ -122,7 +126,7 @@ with col_left:
     )
     st.plotly_chart(fig1, use_container_width=True)
 
-# --- Candlestick Chart ---
+# --- Live Candlestick Chart ---
 with col_right:
     fig2 = go.Figure(data=[go.Candlestick(
         x=candles["time"],
@@ -131,7 +135,7 @@ with col_right:
         name="Price"
     )])
     fig2.update_layout(
-        title="BTC/USDT 1m Candles",
+        title=f"BTC/USDT Candlestick Chart ({selected_tf})",
         xaxis_title="Time",
         yaxis_title="Price",
         height=500
