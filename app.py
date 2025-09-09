@@ -1,133 +1,87 @@
 import streamlit as st
 import requests
 import pandas as pd
-import time
 import plotly.graph_objects as go
+from streamlit_autorefresh import st_autorefresh
+
+# --- Auto-refresh every 2 seconds ---
+st_autorefresh(interval=2000, key="refresh")
 
 st.set_page_config(page_title="BTC/USDT Order Book Dashboard", layout="wide")
-st.title("BTC/USDT Live Order Book (Binance US)")
+st.title("📊 BTC/USDT Order Book (Binance US)")
 
-# ------------------ Placeholders ------------------
-price_placeholder = st.empty()
-agg_placeholder = st.empty()
-bids_placeholder = st.empty()
-asks_placeholder = st.empty()
-chart_placeholder = st.empty()
-heatmap_placeholder = st.empty()
-
-# ------------------ Binance US Order Book API ------------------
-BINANCE_OB_URL = "https://api.binance.us/api/v3/depth?symbol=BTCUSDT&limit=50"
-
-def get_order_book():
+# --- Get Order Book Data ---
+def get_orderbook():
+    url = "https://api.binance.us/api/v3/depth"
+    params = {"symbol": "BTCUSDT", "limit": 50}
     try:
-        response = requests.get(BINANCE_OB_URL, timeout=3)
-        response.raise_for_status()
-        data = response.json()
-        bids = pd.DataFrame(data['bids'], columns=['Price', 'Quantity']).astype(float)
-        asks = pd.DataFrame(data['asks'], columns=['Price', 'Quantity']).astype(float)
+        res = requests.get(url, params=params, timeout=3)
+        res.raise_for_status()
+        data = res.json()
+        bids = pd.DataFrame(data["bids"], columns=["price", "qty"], dtype=float)
+        asks = pd.DataFrame(data["asks"], columns=["price", "qty"], dtype=float)
         return bids, asks
     except Exception:
         return None, None
 
-def get_mid_price(bids, asks):
-    return (bids['Price'].iloc[0] + asks['Price'].iloc[0]) / 2
+bids, asks = get_orderbook()
 
-# ------------------ Keep history for chart ------------------
-if "history" not in st.session_state:
-    st.session_state.history = []
+if bids is None or asks is None:
+    st.error("❌ Failed to fetch order book.")
+    st.stop()
 
-# ------------------ Draw static headers once ------------------
-bids_placeholder.subheader("Top 10 Bids")
-asks_placeholder.subheader("Top 10 Asks")
+# --- Calculate Buy/Sell Pressure ---
+total_bids = bids["qty"].sum()
+total_asks = asks["qty"].sum()
 
-# ------------------ Live update loop ------------------
-while True:
-    bids, asks = get_order_book()
+if total_bids + total_asks > 0:
+    imbalance = (total_bids - total_asks) / (total_bids + total_asks)
+else:
+    imbalance = 0
 
-    if bids is not None and asks is not None:
-        # Mid price
-        mid_price = get_mid_price(bids, asks)
-        price_placeholder.metric(label="Mid Price", value=f"${mid_price:,.2f}")
+if imbalance > 0.2:
+    pressure_text = "🔥 Buyers Aggressive (Bullish)"
+elif imbalance < -0.2:
+    pressure_text = "🔴 Sellers Aggressive (Bearish)"
+else:
+    pressure_text = "⚖️ Balanced (Sideways)"
 
-        # Aggressiveness / sentiment
-        total_bid_qty = bids['Quantity'].sum()
-        total_ask_qty = asks['Quantity'].sum()
+# --- Show Live Pressure ---
+col1, col2, col3 = st.columns(3)
+col1.metric("Buy Volume", f"{total_bids:,.2f}")
+col2.metric("Sell Volume", f"{total_asks:,.2f}")
+col3.metric("Imbalance", f"{imbalance*100:.1f}%")
+st.subheader(f"Market Pressure: {pressure_text}")
 
-        if total_bid_qty > total_ask_qty:
-            market_sentiment = "BUYERS AGGRESSIVE 🟢"
-        elif total_ask_qty > total_bid_qty:
-            market_sentiment = "SELLERS AGGRESSIVE 🔴"
-        else:
-            market_sentiment = "NEUTRAL ⚪"
+# --- Heatmap Zones (Top 5 Walls) ---
+top_bid = bids.sort_values("qty", ascending=False).head(5)
+top_ask = asks.sort_values("qty", ascending=False).head(5)
 
-        agg_placeholder.markdown(
-            f"**Market Sentiment:** {market_sentiment}<br>"
-            f"**Total Bid Volume:** {total_bid_qty:,.4f} BTC | "
-            f"**Total Ask Volume:** {total_ask_qty:,.4f} BTC",
-            unsafe_allow_html=True
-        )
+st.subheader("Liquidity Heatmap Zones")
+heatmap_df = pd.concat([
+    top_bid.assign(side="Buy Wall"),
+    top_ask.assign(side="Sell Wall")
+])
+st.table(heatmap_df)
 
-        # Update tables
-        bids_placeholder.dataframe(
-            bids.head(10).style.format({"Price": "${:,.2f}", "Quantity": "{:,.4f}"}),
-            use_container_width=True
-        )
-        asks_placeholder.dataframe(
-            asks.head(10).style.format({"Price": "${:,.2f}", "Quantity": "{:,.4f}"}),
-            use_container_width=True
-        )
+# --- Plot Heatmap ---
+fig = go.Figure()
 
-        # ------------------ Update history & chart ------------------
-        st.session_state.history.append(
-            {"price": mid_price, "bids": total_bid_qty, "asks": total_ask_qty}
-        )
-        st.session_state.history = st.session_state.history[-30:]  # keep last 30 updates
-        df_hist = pd.DataFrame(st.session_state.history)
+fig.add_trace(go.Bar(
+    x=bids["price"], y=bids["qty"],
+    name="Bids", marker_color="green", opacity=0.6
+))
+fig.add_trace(go.Bar(
+    x=asks["price"], y=asks["qty"],
+    name="Asks", marker_color="red", opacity=0.6
+))
 
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            y=df_hist["bids"], mode="lines+markers", name="Buy Volume", line=dict(color="green")
-        ))
-        fig.add_trace(go.Scatter(
-            y=df_hist["asks"], mode="lines+markers", name="Sell Volume", line=dict(color="red")
-        ))
-        fig.update_layout(
-            title="Buy vs Sell Pressure (Last 30 updates)",
-            xaxis_title="Update Count",
-            yaxis_title="Volume (BTC)",
-            template="plotly_dark",
-            height=400
-        )
-        chart_placeholder.plotly_chart(fig, use_container_width=True)
+fig.update_layout(
+    title="Order Book Heatmap (Top 50 Levels)",
+    xaxis_title="Price",
+    yaxis_title="Quantity",
+    barmode="overlay",
+    height=500
+)
 
-        # ------------------ Order Book Depth Heatmap ------------------
-        # Combine bids and asks
-        depth = pd.concat([
-            bids.assign(Side="Bids"),
-            asks.assign(Side="Asks")
-        ])
-        depth.sort_values("Price", inplace=True)
-
-        fig_depth = go.Figure(data=go.Heatmap(
-            z=depth["Quantity"],
-            x=depth["Side"],
-            y=depth["Price"],
-            colorscale="RdYlGn",  # Red = Sell, Green = Buy
-            reversescale=True,
-            colorbar=dict(title="Order Size (BTC)")
-        ))
-
-        fig_depth.update_layout(
-            title="Order Book Depth Heatmap",
-            xaxis_title="Side (Buy/Sell)",
-            yaxis_title="Price",
-            template="plotly_dark",
-            height=500
-        )
-
-        heatmap_placeholder.plotly_chart(fig_depth, use_container_width=True)
-
-    else:
-        price_placeholder.text("❌ Failed to fetch order book from Binance US API.")
-
-    time.sleep(2)
+st.plotly_chart(fig, use_container_width=True)
