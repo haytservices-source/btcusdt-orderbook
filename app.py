@@ -11,6 +11,10 @@ st_autorefresh(interval=2000, key="refresh")
 st.set_page_config(page_title="BTC/USDT Advanced Order Flow", layout="wide")
 st.title("📊 BTC/USDT Advanced Order Flow Dashboard")
 
+# --- Initialize WPI history ---
+if "wpi_history" not in st.session_state:
+    st.session_state.wpi_history = []
+
 # --- User Inputs ---
 interval = st.sidebar.selectbox(
     "Select Candle Interval", ["1m", "5m", "15m", "1h", "4h"], index=0
@@ -59,15 +63,20 @@ if bids is None or asks is None or candles is None:
 # --- Current Market Price ---
 current_price = candles["close"].iloc[-1]
 
-# --- Weighted Pressure Calculation (vectorized) ---
+# --- Weighted Pressure Calculation ---
 bid_dist = (current_price - bids["price"]).clip(lower=0.01)
 ask_dist = (asks["price"] - current_price).clip(lower=0.01)
 
 weighted_bids = (bids["qty"] / bid_dist).sum()
 weighted_asks = (asks["qty"] / ask_dist).sum()
 
-# --- Weighted Pressure Index (smoothed) ---
+# --- Weighted Pressure Index ---
 wpi = (weighted_bids - weighted_asks) / (weighted_bids + weighted_asks)
+st.session_state.wpi_history.append({"time": pd.Timestamp.now(), "wpi": wpi})
+
+# Keep only last 100 values
+st.session_state.wpi_history = st.session_state.wpi_history[-100:]
+wpi_df = pd.DataFrame(st.session_state.wpi_history)
 
 # --- Market Bias ---
 if wpi > 0.25:
@@ -106,12 +115,11 @@ col3.metric("Weighted Sell Pressure", f"{weighted_asks:,.2f}")
 
 st.subheader(f"Market Bias → {bias} | Confidence: {confidence}")
 st.subheader(f"Projection → {projection}")
-
 st.caption(f"🐋 Biggest Buy Wall: {big_bid['qty']:.2f} BTC @ ${big_bid['price']:.0f} | "
            f"🐋 Biggest Sell Wall: {big_ask['qty']:.2f} BTC @ ${big_ask['price']:.0f}")
 
-# --- Layout with two charts ---
-col_left, col_right = st.columns(2)
+# --- Layout with Charts ---
+col_left, col_center, col_right = st.columns([1, 1, 1])
 
 # --- Heatmap (Cumulative Depth) ---
 with col_left:
@@ -129,6 +137,21 @@ with col_left:
     )
     st.plotly_chart(fig1, use_container_width=True)
 
+# --- WPI Line Chart ---
+with col_center:
+    fig_wpi = go.Figure()
+    fig_wpi.add_trace(go.Scatter(
+        x=wpi_df["time"], y=wpi_df["wpi"], mode="lines+markers",
+        name="Weighted Pressure Index", line=dict(color="orange")
+    ))
+    fig_wpi.update_layout(
+        title="Live Weighted Pressure Index (WPI)",
+        xaxis_title="Time", yaxis_title="WPI",
+        yaxis=dict(range=[-1,1]),
+        height=500
+    )
+    st.plotly_chart(fig_wpi, use_container_width=True)
+
 # --- Candlestick Chart with Volume ---
 with col_right:
     fig2 = go.Figure()
@@ -144,7 +167,7 @@ with col_right:
         x=candles["time"], y=candles["volume"],
         name="Volume", marker=dict(color="blue"), opacity=0.3, yaxis="y2"
     ))
-    # Mid Price Line
+    # Current Price Line
     fig2.add_hline(y=current_price, line_dash="dash", line_color="orange",
                    annotation_text="Current Price", annotation_position="top left")
     # Layout
