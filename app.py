@@ -73,8 +73,6 @@ weighted_asks = (asks["qty"] / ask_dist).sum()
 # --- Weighted Pressure Index ---
 wpi = (weighted_bids - weighted_asks) / (weighted_bids + weighted_asks)
 st.session_state.wpi_history.append({"time": pd.Timestamp.now(), "wpi": wpi})
-
-# Keep only last 100 values
 st.session_state.wpi_history = st.session_state.wpi_history[-100:]
 wpi_df = pd.DataFrame(st.session_state.wpi_history)
 
@@ -118,7 +116,7 @@ st.subheader(f"Projection → {projection}")
 st.caption(f"🐋 Biggest Buy Wall: {big_bid['qty']:.2f} BTC @ ${big_bid['price']:.0f} | "
            f"🐋 Biggest Sell Wall: {big_ask['qty']:.2f} BTC @ ${big_ask['price']:.0f}")
 
-# --- Layout with Charts ---
+# --- Layout with 3 Charts ---
 col_left, col_center, col_right = st.columns([1, 1, 1])
 
 # --- Heatmap (Cumulative Depth) ---
@@ -137,18 +135,36 @@ with col_left:
     )
     st.plotly_chart(fig1, use_container_width=True)
 
-# --- WPI Line Chart ---
+# --- WPI Line Chart with Color Zones ---
 with col_center:
     fig_wpi = go.Figure()
-    fig_wpi.add_trace(go.Scatter(
-        x=wpi_df["time"], y=wpi_df["wpi"], mode="lines+markers",
-        name="Weighted Pressure Index", line=dict(color="orange")
-    ))
+    
+    bullish = wpi_df[wpi_df["wpi"] > 0.25]
+    bearish = wpi_df[wpi_df["wpi"] < -0.25]
+    neutral = wpi_df[(wpi_df["wpi"] >= -0.25) & (wpi_df["wpi"] <= 0.25)]
+    
+    if not bullish.empty:
+        fig_wpi.add_trace(go.Scatter(
+            x=bullish["time"], y=bullish["wpi"], mode="lines+markers",
+            name="Bullish WPI", line=dict(color="green")
+        ))
+    if not neutral.empty:
+        fig_wpi.add_trace(go.Scatter(
+            x=neutral["time"], y=neutral["wpi"], mode="lines+markers",
+            name="Neutral WPI", line=dict(color="gold")
+        ))
+    if not bearish.empty:
+        fig_wpi.add_trace(go.Scatter(
+            x=bearish["time"], y=bearish["wpi"], mode="lines+markers",
+            name="Bearish WPI", line=dict(color="red")
+        ))
+    
     fig_wpi.update_layout(
         title="Live Weighted Pressure Index (WPI)",
         xaxis_title="Time", yaxis_title="WPI",
         yaxis=dict(range=[-1,1]),
-        height=500
+        height=500,
+        showlegend=True
     )
     st.plotly_chart(fig_wpi, use_container_width=True)
 
