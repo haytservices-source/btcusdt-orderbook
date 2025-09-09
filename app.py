@@ -13,9 +13,10 @@ agg_placeholder = st.empty()
 bids_placeholder = st.empty()
 asks_placeholder = st.empty()
 chart_placeholder = st.empty()
+heatmap_placeholder = st.empty()
 
 # ------------------ Binance US Order Book API ------------------
-BINANCE_OB_URL = "https://api.binance.us/api/v3/depth?symbol=BTCUSDT&limit=20"
+BINANCE_OB_URL = "https://api.binance.us/api/v3/depth?symbol=BTCUSDT&limit=50"
 
 def get_order_book():
     try:
@@ -80,10 +81,7 @@ while True:
         st.session_state.history.append(
             {"price": mid_price, "bids": total_bid_qty, "asks": total_ask_qty}
         )
-
-        # Keep last 30 points only
-        st.session_state.history = st.session_state.history[-30:]
-
+        st.session_state.history = st.session_state.history[-30:]  # keep last 30 updates
         df_hist = pd.DataFrame(st.session_state.history)
 
         fig = go.Figure()
@@ -91,4 +89,45 @@ while True:
             y=df_hist["bids"], mode="lines+markers", name="Buy Volume", line=dict(color="green")
         ))
         fig.add_trace(go.Scatter(
-            y=df_hist["asks"], mode="lines+markers", name="Sell Volume", line_
+            y=df_hist["asks"], mode="lines+markers", name="Sell Volume", line=dict(color="red")
+        ))
+        fig.update_layout(
+            title="Buy vs Sell Pressure (Last 30 updates)",
+            xaxis_title="Update Count",
+            yaxis_title="Volume (BTC)",
+            template="plotly_dark",
+            height=400
+        )
+        chart_placeholder.plotly_chart(fig, use_container_width=True)
+
+        # ------------------ Order Book Depth Heatmap ------------------
+        # Combine bids and asks
+        depth = pd.concat([
+            bids.assign(Side="Bids"),
+            asks.assign(Side="Asks")
+        ])
+        depth.sort_values("Price", inplace=True)
+
+        fig_depth = go.Figure(data=go.Heatmap(
+            z=depth["Quantity"],
+            x=depth["Side"],
+            y=depth["Price"],
+            colorscale="RdYlGn",  # Red = Sell, Green = Buy
+            reversescale=True,
+            colorbar=dict(title="Order Size (BTC)")
+        ))
+
+        fig_depth.update_layout(
+            title="Order Book Depth Heatmap",
+            xaxis_title="Side (Buy/Sell)",
+            yaxis_title="Price",
+            template="plotly_dark",
+            height=500
+        )
+
+        heatmap_placeholder.plotly_chart(fig_depth, use_container_width=True)
+
+    else:
+        price_placeholder.text("❌ Failed to fetch order book from Binance US API.")
+
+    time.sleep(2)
