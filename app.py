@@ -4,8 +4,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
-# --- Auto-refresh every 2 seconds ---
-st_autorefresh(interval=2000, key="refresh")
+# --- Auto-refresh every 1 second ---
+st_autorefresh(interval=1000, key="refresh")  # 1000ms = 1s
 
 # --- Page Setup ---
 st.set_page_config(page_title="BTC/USDT Advanced Order Flow", layout="wide")
