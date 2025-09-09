@@ -9,7 +9,7 @@ st_autorefresh(interval=1000, key="refresh")  # 1000ms = 1s
 
 # --- Page Setup ---
 st.set_page_config(page_title="BTC/USDT Advanced Order Flow", layout="wide")
-st.title("📊 BTC/USDT Advanced Order Flow Dashboard (Binance.com)")
+st.title("📊 BTC/USDT Advanced Order Flow Dashboard")
 
 # --- Initialize WPI history ---
 if "wpi_history" not in st.session_state:
@@ -23,7 +23,7 @@ candle_limit = st.sidebar.number_input("Number of Candles", 20, 200, 50)
 
 # --- Fetch Order Book ---
 def get_orderbook(limit=200):
-    url = "https://api.binance.com/api/v3/depth"
+    url = "https://api.binance.us/api/v3/depth"
     params = {"symbol": "BTCUSDT", "limit": limit}
     try:
         res = requests.get(url, params=params, timeout=3)
@@ -32,13 +32,12 @@ def get_orderbook(limit=200):
         bids = pd.DataFrame(data["bids"], columns=["price", "qty"], dtype=float)
         asks = pd.DataFrame(data["asks"], columns=["price", "qty"], dtype=float)
         return bids, asks
-    except Exception as e:
-        st.error(f"Order book fetch error: {e}")
+    except Exception:
         return None, None
 
 # --- Fetch Candlestick Data ---
 def get_candles(limit=50, interval="1m"):
-    url = "https://api.binance.com/api/v3/klines"
+    url = "https://api.binance.us/api/v3/klines"
     params = {"symbol": "BTCUSDT", "interval": interval, "limit": limit}
     try:
         res = requests.get(url, params=params, timeout=3)
@@ -50,8 +49,7 @@ def get_candles(limit=50, interval="1m"):
         ], dtype=float)
         df["time"] = pd.to_datetime(df["time"], unit="ms")
         return df[["time","open","high","low","close","volume"]]
-    except Exception as e:
-        st.error(f"Candles fetch error: {e}")
+    except Exception:
         return None
 
 # --- Get Data ---
@@ -197,3 +195,4 @@ with col_right:
         height=500
     )
     st.plotly_chart(fig2, use_container_width=True)
+
