@@ -7,8 +7,15 @@ from streamlit_autorefresh import st_autorefresh
 # --- Auto-refresh every 2 seconds ---
 st_autorefresh(interval=2000, key="refresh")
 
+# --- Page Setup ---
 st.set_page_config(page_title="BTC/USDT Advanced Order Flow", layout="wide")
 st.title("📊 BTC/USDT Advanced Order Flow Dashboard")
+
+# --- User Inputs ---
+interval = st.sidebar.selectbox(
+    "Select Candle Interval", ["1m", "5m", "15m", "1h", "4h"], index=0
+)
+candle_limit = st.sidebar.number_input("Number of Candles", 20, 200, 50)
 
 # --- Fetch Order Book ---
 def get_orderbook(limit=200):
@@ -24,8 +31,8 @@ def get_orderbook(limit=200):
     except Exception:
         return None, None
 
-# --- Fetch Candlestick Data (multi-timeframe) ---
-def get_candles(interval="1m", limit=100):
+# --- Fetch Candlestick Data ---
+def get_candles(limit=50, interval="1m"):
     url = "https://api.binance.us/api/v3/klines"
     params = {"symbol": "BTCUSDT", "interval": interval, "limit": limit}
     try:
@@ -41,34 +48,28 @@ def get_candles(interval="1m", limit=100):
     except Exception:
         return None
 
-# --- Timeframe Selector ---
-timeframes = ["1m", "5m", "15m", "1h", "4h"]
-selected_tf = st.selectbox("⏳ Select Timeframe", timeframes, index=0)
-
 # --- Get Data ---
 bids, asks = get_orderbook()
-candles = get_candles(selected_tf, 100)
+candles = get_candles(limit=candle_limit, interval=interval)
 
 if bids is None or asks is None or candles is None:
     st.error("❌ Failed to fetch market data.")
     st.stop()
 
-# --- Mid Price ---
-mid_price = (bids["price"].max() + asks["price"].min()) / 2
+# --- Current Market Price ---
+current_price = candles["close"].iloc[-1]
 
-# --- Weighted Pressure ---
-bids["weight"] = bids.apply(lambda row: row["qty"] / max(1, mid_price - row["price"]), axis=1)
-asks["weight"] = asks.apply(lambda row: row["qty"] / max(1, row["price"] - mid_price), axis=1)
+# --- Weighted Pressure Calculation (vectorized) ---
+bid_dist = (current_price - bids["price"]).clip(lower=0.01)
+ask_dist = (asks["price"] - current_price).clip(lower=0.01)
 
-weighted_bids = bids["weight"].sum()
-weighted_asks = asks["weight"].sum()
+weighted_bids = (bids["qty"] / bid_dist).sum()
+weighted_asks = (asks["qty"] / ask_dist).sum()
 
-if weighted_bids + weighted_asks > 0:
-    wpi = (weighted_bids - weighted_asks) / (weighted_bids + weighted_asks)
-else:
-    wpi = 0
+# --- Weighted Pressure Index (smoothed) ---
+wpi = (weighted_bids - weighted_asks) / (weighted_bids + weighted_asks)
 
-# --- Bias ---
+# --- Market Bias ---
 if wpi > 0.25:
     bias = "🔥 Buyers Dominant (Bullish)"
     confidence = f"{wpi*100:.1f}%"
@@ -83,8 +84,8 @@ else:
 big_bid = bids.loc[bids["qty"].idxmax()]
 big_ask = asks.loc[asks["qty"].idxmax()]
 
-nearest_bid = bids[bids["price"] < mid_price].sort_values("price", ascending=False).head(1)
-nearest_ask = asks[asks["price"] > mid_price].sort_values("price", ascending=True).head(1)
+nearest_bid = bids[bids["price"] < current_price].sort_values("price", ascending=False).head(1)
+nearest_ask = asks[asks["price"] > current_price].sort_values("price", ascending=True).head(1)
 
 nearest_bid_price, nearest_bid_qty = nearest_bid.iloc[0]["price"], nearest_bid.iloc[0]["qty"]
 nearest_ask_price, nearest_ask_qty = nearest_ask.iloc[0]["price"], nearest_ask.iloc[0]["qty"]
@@ -99,7 +100,7 @@ else:
 
 # --- Show Metrics ---
 col1, col2, col3 = st.columns(3)
-col1.metric("Mid Price", f"${mid_price:,.2f}")
+col1.metric("Current Price", f"${current_price:,.2f}")
 col2.metric("Weighted Buy Pressure", f"{weighted_bids:,.2f}")
 col3.metric("Weighted Sell Pressure", f"{weighted_asks:,.2f}")
 
@@ -112,32 +113,46 @@ st.caption(f"🐋 Biggest Buy Wall: {big_bid['qty']:.2f} BTC @ ${big_bid['price'
 # --- Layout with two charts ---
 col_left, col_right = st.columns(2)
 
-# --- Heatmap Chart (Order Book) ---
+# --- Heatmap (Cumulative Depth) ---
 with col_left:
+    bids["cum_qty"] = bids["qty"].cumsum()
+    asks["cum_qty"] = asks["qty"].cumsum()
     fig1 = go.Figure()
-    fig1.add_trace(go.Bar(x=bids["price"], y=bids["qty"],
-                          name="Bids", marker=dict(color="green"), opacity=0.6))
-    fig1.add_trace(go.Bar(x=asks["price"], y=asks["qty"],
-                          name="Asks", marker=dict(color="red"), opacity=0.6))
+    fig1.add_trace(go.Scatter(x=bids["price"], y=bids["cum_qty"], 
+                              mode="lines", name="Bid Depth", line=dict(color="green")))
+    fig1.add_trace(go.Scatter(x=asks["price"], y=asks["cum_qty"], 
+                              mode="lines", name="Ask Depth", line=dict(color="red")))
     fig1.update_layout(
-        title="Liquidity Heatmap (Order Book Depth)",
-        xaxis_title="Price", yaxis_title="Quantity",
-        barmode="overlay", height=500
+        title="Liquidity Depth (Order Book)",
+        xaxis_title="Price", yaxis_title="Cumulative Quantity",
+        height=500
     )
     st.plotly_chart(fig1, use_container_width=True)
 
-# --- Live Candlestick Chart ---
+# --- Candlestick Chart with Volume ---
 with col_right:
-    fig2 = go.Figure(data=[go.Candlestick(
+    fig2 = go.Figure()
+    # Candles
+    fig2.add_trace(go.Candlestick(
         x=candles["time"],
         open=candles["open"], high=candles["high"],
         low=candles["low"], close=candles["close"],
         name="Price"
-    )])
+    ))
+    # Volume Bars
+    fig2.add_trace(go.Bar(
+        x=candles["time"], y=candles["volume"],
+        name="Volume", marker=dict(color="blue"), opacity=0.3, yaxis="y2"
+    ))
+    # Mid Price Line
+    fig2.add_hline(y=current_price, line_dash="dash", line_color="orange",
+                   annotation_text="Current Price", annotation_position="top left")
+    # Layout
     fig2.update_layout(
-        title=f"BTC/USDT Candlestick Chart ({selected_tf})",
+        title=f"BTC/USDT {interval} Candles",
         xaxis_title="Time",
         yaxis_title="Price",
+        yaxis2=dict(overlaying="y", side="right", showgrid=False, position=1),
         height=500
     )
     st.plotly_chart(fig2, use_container_width=True)
