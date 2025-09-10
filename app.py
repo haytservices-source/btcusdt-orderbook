@@ -4,28 +4,19 @@ import pandas as pd
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
-# --- Auto-refresh every 1 second ---
-st_autorefresh(interval=1000, key="refresh")
+# --- Auto-refresh every 2 seconds ---
+st_autorefresh(interval=2000, key="refresh")
 
-# --- Page Setup ---
 st.set_page_config(page_title="BTC/USDT Advanced Order Flow", layout="wide")
 st.title("📊 BTC/USDT Advanced Order Flow Dashboard")
 
-# --- Initialize WPI history ---
-if "wpi_history" not in st.session_state:
-    st.session_state.wpi_history = []
-
-# --- Sidebar ---
-exchange = st.sidebar.radio("Select Exchange", ["binance.com", "binance.us"], index=0)
-base_url = "https://api." + exchange
-
-interval = st.sidebar.selectbox("Select Candle Interval", ["1m", "5m", "15m", "1h", "4h"], index=0)
-candle_limit = st.sidebar.number_input("Number of Candles", 20, 200, 50)
+# --- Exchange ---
+base_url = "https://api.binance.us"
 
 # --- Fetch Order Book ---
-def get_orderbook(limit=200):
+def get_orderbook(symbol="BTCUSDT", limit=200):
     url = f"{base_url}/api/v3/depth"
-    params = {"symbol": "BTCUSDT", "limit": limit}
+    params = {"symbol": symbol, "limit": limit}
     try:
         res = requests.get(url, params=params, timeout=3)
         res.raise_for_status()
@@ -38,9 +29,9 @@ def get_orderbook(limit=200):
         return None, None
 
 # --- Fetch Candlestick Data ---
-def get_candles(limit=50, interval="1m"):
+def get_candles(symbol="BTCUSDT", interval="1m", limit=50):
     url = f"{base_url}/api/v3/klines"
-    params = {"symbol": "BTCUSDT", "interval": interval, "limit": limit}
+    params = {"symbol": symbol, "interval": interval, "limit": limit}
     try:
         res = requests.get(url, params=params, timeout=3)
         res.raise_for_status()
@@ -55,152 +46,68 @@ def get_candles(limit=50, interval="1m"):
         st.error(f"❌ Candles fetch error: {e}")
         return None
 
-# --- Get Data ---
+# --- Buy/Sell Pressure Calculation ---
+def calculate_pressure(bids, asks):
+    if bids is None or asks is None:
+        return None, None
+    buy_pressure = (bids['qty'] * bids['price']).sum()
+    sell_pressure = (asks['qty'] * asks['price']).sum()
+    return buy_pressure, sell_pressure
+
+# --- Secret Strategy Prediction ---
+def secret_strategy(buy_pressure, sell_pressure):
+    if buy_pressure is None or sell_pressure is None:
+        return "NO DATA", 0
+    total = buy_pressure + sell_pressure
+    confidence = abs(buy_pressure - sell_pressure) / total
+    if buy_pressure > sell_pressure * 1.05:
+        return "BUY ⬆️", confidence
+    elif sell_pressure > buy_pressure * 1.05:
+        return "SELL ⬇️", confidence
+    else:
+        return "SIDEWAYS ➡️", confidence
+
+# --- Fetch Data ---
 bids, asks = get_orderbook()
-candles = get_candles(limit=candle_limit, interval=interval)
+candles = get_candles()
 
-if bids is None or asks is None or candles is None:
-    st.error("❌ Failed to fetch market data (API error). Try toggling binance.com / binance.us in sidebar.")
-    st.stop()
-
-# --- Current Market Price ---
-current_price = candles["close"].iloc[-1]
-
-# --- Weighted Pressure Calculation ---
-bid_dist = (current_price - bids["price"]).clip(lower=0.01)
-ask_dist = (asks["price"] - current_price).clip(lower=0.01)
-
-weighted_bids = (bids["qty"] / bid_dist).sum()
-weighted_asks = (asks["qty"] / ask_dist).sum()
-
-# --- Weighted Pressure Index (WPI) ---
-wpi = (weighted_bids - weighted_asks) / (weighted_bids + weighted_asks)
-st.session_state.wpi_history.append({"time": pd.Timestamp.now(), "wpi": wpi})
-st.session_state.wpi_history = st.session_state.wpi_history[-100:]
-wpi_df = pd.DataFrame(st.session_state.wpi_history)
-
-# --- Market Bias ---
-if wpi > 0.25:
-    bias = "🔥 Buyers Dominant (Bullish)"
-elif wpi < -0.25:
-    bias = "🔴 Sellers Dominant (Bearish)"
+if bids is not None and asks is not None:
+    buy_pressure, sell_pressure = calculate_pressure(bids, asks)
+    signal, confidence = secret_strategy(buy_pressure, sell_pressure)
 else:
-    bias = "⚖️ Neutral / Sideways"
+    buy_pressure = sell_pressure = signal = confidence = None
 
-# --- Whale Detection ---
-big_bid = bids.loc[bids["qty"].idxmax()]
-big_ask = asks.loc[asks["qty"].idxmax()]
+# --- Display Dashboard ---
+col1, col2 = st.columns([1,2])
 
-nearest_bid = bids[bids["price"] < current_price].sort_values("price", ascending=False).head(1)
-nearest_ask = asks[asks["price"] > current_price].sort_values("price", ascending=True).head(1)
+with col1:
+    st.subheader("🔹 Market Pressure")
+    if buy_pressure is not None:
+        st.metric("Buy Pressure", f"{buy_pressure:,.0f}")
+        st.metric("Sell Pressure", f"{sell_pressure:,.0f}")
+        st.metric("Signal", f"{signal} ({confidence:.2f})")
+    else:
+        st.info("Waiting for data...")
 
-nearest_bid_price, nearest_bid_qty = nearest_bid.iloc[0]["price"], nearest_bid.iloc[0]["qty"]
-nearest_ask_price, nearest_ask_qty = nearest_ask.iloc[0]["price"], nearest_ask.iloc[0]["qty"]
+with col2:
+    st.subheader("📈 Live Candlestick Chart")
+    if candles is not None and not candles.empty:
+        fig = go.Figure(data=[go.Candlestick(
+            x=candles['time'],
+            open=candles['open'],
+            high=candles['high'],
+            low=candles['low'],
+            close=candles['close'],
+            name="Candles"
+        )])
+        fig.update_layout(
+            xaxis_rangeslider_visible=False,
+            margin=dict(l=10,r=10,t=30,b=10),
+            height=500
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Waiting for candle data...")
 
-# --- Secret Strategy Logic ---
-prediction = "🤔 Unclear"
-confidence = 50
-reason = "No strong signal detected."
-
-# Delta WPI (momentum)
-if len(wpi_df) > 5:
-    delta_wpi = wpi_df["wpi"].iloc[-1] - wpi_df["wpi"].iloc[-5]
-else:
-    delta_wpi = 0
-
-# Volume spike check
-avg_vol = candles["volume"].iloc[-20:].mean()
-vol_spike = candles["volume"].iloc[-1] > 1.5 * avg_vol
-
-# Stop hunt detection
-last_candle = candles.iloc[-1]
-wick_down = last_candle["low"] < nearest_bid_price and last_candle["close"] > last_candle["open"]
-wick_up = last_candle["high"] > nearest_ask_price and last_candle["close"] < last_candle["open"]
-
-if wpi > 0.2 and delta_wpi > 0.05 and vol_spike:
-    prediction = "🚀 Bullish Breakout Incoming"
-    confidence = min(95, abs(wpi) * 100)
-    reason = "WPI rising + strong buy pressure + volume spike."
-elif wpi < -0.2 and delta_wpi < -0.05 and vol_spike:
-    prediction = "📉 Bearish Breakdown Likely"
-    confidence = min(95, abs(wpi) * 100)
-    reason = "WPI falling + strong sell pressure + volume spike."
-elif wick_down:
-    prediction = "🟢 Bullish Liquidity Grab (Stop Hunt)"
-    confidence = 75
-    reason = "Price pierced bid wall but closed green."
-elif wick_up:
-    prediction = "🔴 Bearish Liquidity Grab (Stop Hunt)"
-    confidence = 75
-    reason = "Price pierced ask wall but closed red."
-
-# --- Show Metrics ---
-col1, col2, col3 = st.columns(3)
-col1.metric("Current Price", f"${current_price:,.2f}")
-col2.metric("Weighted Buy Pressure", f"{weighted_bids:,.2f}")
-col3.metric("Weighted Sell Pressure", f"{weighted_asks:,.2f}")
-
-# --- Prediction Box ---
-st.subheader(f"🎯 Sniper Prediction → {prediction}")
-st.write(f"**Reason:** {reason}")
-st.write(f"**Confidence:** {confidence:.1f}%")
-st.caption(f"🐋 Biggest Buy Wall: {big_bid['qty']:.2f} BTC @ ${big_bid['price']:.0f} | "
-           f"🐋 Biggest Sell Wall: {big_ask['qty']:.2f} BTC @ ${big_ask['price']:.0f}")
-
-# --- Layout with 3 Charts ---
-col_left, col_center, col_right = st.columns([1, 1, 1])
-
-# --- Heatmap (Cumulative Depth) ---
-with col_left:
-    bids["cum_qty"] = bids["qty"].cumsum()
-    asks["cum_qty"] = asks["qty"].cumsum()
-    fig1 = go.Figure()
-    fig1.add_trace(go.Scatter(x=bids["price"], y=bids["cum_qty"], 
-                              mode="lines", name="Bid Depth", line=dict(color="green")))
-    fig1.add_trace(go.Scatter(x=asks["price"], y=asks["cum_qty"], 
-                              mode="lines", name="Ask Depth", line=dict(color="red")))
-    fig1.update_layout(
-        title="Liquidity Depth (Order Book)",
-        xaxis_title="Price", yaxis_title="Cumulative Quantity",
-        height=500
-    )
-    st.plotly_chart(fig1, use_container_width=True)
-
-# --- WPI Line Chart ---
-with col_center:
-    fig_wpi = go.Figure()
-    fig_wpi.add_trace(go.Scatter(
-        x=wpi_df["time"], y=wpi_df["wpi"], mode="lines+markers",
-        name="WPI", line=dict(color="blue")
-    ))
-    fig_wpi.update_layout(
-        title="Live Weighted Pressure Index (WPI)",
-        xaxis_title="Time", yaxis_title="WPI",
-        yaxis=dict(range=[-1,1]),
-        height=500
-    )
-    st.plotly_chart(fig_wpi, use_container_width=True)
-
-# --- Candlestick Chart with Volume ---
-with col_right:
-    fig2 = go.Figure()
-    fig2.add_trace(go.Candlestick(
-        x=candles["time"],
-        open=candles["open"], high=candles["high"],
-        low=candles["low"], close=candles["close"],
-        name="Price"
-    ))
-    fig2.add_trace(go.Bar(
-        x=candles["time"], y=candles["volume"],
-        name="Volume", marker=dict(color="blue"), opacity=0.3, yaxis="y2"
-    ))
-    fig2.add_hline(y=current_price, line_dash="dash", line_color="orange",
-                   annotation_text="Current Price", annotation_position="top left")
-    fig2.update_layout(
-        title=f"BTC/USDT {interval} Candles",
-        xaxis_title="Time",
-        yaxis_title="Price",
-        yaxis2=dict(overlaying="y", side="right", showgrid=False, position=1),
-        height=500
-    )
-    st.plotly_chart(fig2, use_container_width=True)
+st.markdown("---")
+st.markdown("⚡ Dashboard updates every 2 seconds. Data source: [Binance.US](https://www.binance.us)")
